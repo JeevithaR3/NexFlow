@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NexFlow demonstration scenario. Run standalone with: sumo -c simulation.sumocfg (or sumo-gui) -->
+<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
+    <input>
+        <net-file value="../network/network.net.xml"/>
+        <route-files value="../routes/routes.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="1260"/>
+        <step-length value="1"/>
+    </time>
+    <processing>
+        <waiting-time-memory value="3600"/>
+    </processing>
+    <random_number>
+        <seed value="1"/>
+    </random_number>
+    <report>
+        <no-step-log value="true"/>
+        <duration-log.disable value="true"/>
+    </report>
+</configuration>

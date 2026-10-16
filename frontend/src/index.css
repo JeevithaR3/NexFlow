@@ -1,0 +1,7 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+:root { --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --bg:#f1f5f9; --brand:#0f766e; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+.leaflet-container { font: inherit; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
