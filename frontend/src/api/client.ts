@@ -40,6 +40,43 @@ export interface NetworkData {
   signal_limits: { min_green_s: number; max_green_s: number; max_cycle_s: number };
 }
 
+export interface LiveTrafficReading {
+  id: number;
+  sensor_id: string;
+  road_name: string;
+  observed_at: string;
+  latitude: number;
+  longitude: number;
+  current_speed_kph: number;
+  free_flow_speed_kph: number;
+  current_travel_time_s: number;
+  free_flow_travel_time_s: number;
+  confidence: number;
+  road_closure: boolean;
+  geometry: [number, number][] | null;
+}
+
+export interface LiveTrafficSensor {
+  id: string;
+  road_name: string;
+  latitude: number;
+  longitude: number;
+  latest: LiveTrafficReading | null;
+}
+
+export interface LiveTrafficStatus {
+  provider: string;
+  configured: boolean;
+  polling_enabled: boolean;
+  poll_interval_s: number;
+  status: string;
+  last_poll_at: string | null;
+  last_error: string | null;
+  observation_count: number;
+  first_observation_at: string | null;
+  sensors: LiveTrafficSensor[];
+}
+
 const get = <T = any>(url: string, params?: object) => http.get<T>(url, { params }).then((r) => r.data);
 const post = <T = any>(url: string, body?: object) => http.post<T>(url, body).then((r) => r.data);
 
@@ -48,6 +85,9 @@ export const api = {
   network: () => get<NetworkData>("/api/v1/network"),
   trafficCurrent: () => get("/api/v1/traffic/current"),
   trafficPredictions: () => get("/api/v1/traffic/predictions"),
+  bengaluruTraffic: () => get<LiveTrafficStatus>("/api/v1/traffic/bengaluru"),
+  bengaluruTrafficHistory: (limit = 1000) => get<{ readings: LiveTrafficReading[] }>("/api/v1/traffic/bengaluru/history", { limit }),
+  pollBengaluruTraffic: () => post<{ status: string; observed_at: string; saved_readings: number; failures: { sensor_id: string; message: string }[] }>("/api/v1/traffic/bengaluru/poll"),
   runPrediction: (scenario: ScenarioIn, mode: "sumo" | "dataset_replay") => post<{ run_id: string }>("/api/v1/predictions/run", { scenario, mode }),
   runSimulation: (scenario: ScenarioIn, intervention: object | null) => post<{ run_id: string }>("/api/v1/simulations/run", { scenario, intervention }),
   evaluate: (body: object) => post<{ run_id: string }>("/api/v1/interventions/evaluate", body),

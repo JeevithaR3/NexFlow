@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     log_level: str = "INFO"
     log_json: bool = False
+    tomtom_api_key: str | None = None
+    traffic_poll_interval_s: int = Field(300, ge=60, le=3600)
+    traffic_retention_days: int = Field(30, ge=1, le=365)
 
     # ---- derived paths ---------------------------------------------------------------
     @property

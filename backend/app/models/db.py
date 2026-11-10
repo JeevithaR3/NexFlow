@@ -78,6 +78,24 @@ class BenchmarkRow(Base):
     result: Mapped[dict] = mapped_column(JSON)
 
 
+class LiveTrafficReadingRow(Base):
+    __tablename__ = "live_traffic_readings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sensor_id: Mapped[str] = mapped_column(String(40), index=True)
+    road_name: Mapped[str] = mapped_column(String(120))
+    observed_at: Mapped[str] = mapped_column(String(32), index=True)
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    current_speed_kph: Mapped[float] = mapped_column(Float)
+    free_flow_speed_kph: Mapped[float] = mapped_column(Float)
+    current_travel_time_s: Mapped[float] = mapped_column(Float)
+    free_flow_travel_time_s: Mapped[float] = mapped_column(Float)
+    confidence: Mapped[float] = mapped_column(Float)
+    road_closure: Mapped[bool] = mapped_column(Boolean)
+    geometry: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+
 def _json_default(o):
     import numpy as np
 

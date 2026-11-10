@@ -14,6 +14,7 @@ from app.ml.inference import ForecastService
 from app.models.db import Database
 from app.services.decision import DecisionEngine
 from app.services.jobs import JobManager
+from app.services.tomtom_traffic import TomTomTrafficCollector
 from app.sumo.runner import SumoRunner
 
 log = get_logger("state")
@@ -26,6 +27,12 @@ class AppState:
         self.limits = SignalLimits()
         self.db = Database(self.s.db_url)
         self.jobs = JobManager(self.db, workers=self.s.max_concurrent_sumo + 1)
+        self.traffic = TomTomTrafficCollector(
+            self.db,
+            self.s.tomtom_api_key,
+            self.s.traffic_poll_interval_s,
+            self.s.traffic_retention_days,
+        )
         self.net: NetworkModel | None = None
         self.net_error: NexFlowError | None = None
         self.twin: DigitalTwin | None = None

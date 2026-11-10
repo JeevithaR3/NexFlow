@@ -32,11 +32,21 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.nexflow = state or AppState(s)
-        log.info("NexFlow API started", extra={"network_loaded": app.state.nexflow.net is not None})
-        yield
+        app.state.nexflow.traffic.start()
+        log.info(
+            "NexFlow API started",
+            extra={
+                "network_loaded": app.state.nexflow.net is not None,
+                "tomtom_configured": bool(app.state.nexflow.s.tomtom_api_key),
+            },
+        )
+        try:
+            yield
+        finally:
+            app.state.nexflow.traffic.stop()
 
     app = FastAPI(title="NexFlow API", version=__version__, lifespan=lifespan,
-                  description="Traffic forecasting, digital twin and congestion-management API (synthetic SUMO data).")
+                  description="Traffic forecasting, a synthetic SUMO digital twin, and optional live Bengaluru traffic observations.")
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in s.cors_origins.split(",") if o.strip()],
                        allow_methods=["*"], allow_headers=["*"])
 

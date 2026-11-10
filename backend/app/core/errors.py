@@ -47,6 +47,11 @@ class DataValidationError(NexFlowError):
     code = "data_invalid"
 
 
+class LiveTrafficUnavailableError(NexFlowError):
+    status_code = 503
+    code = "live_traffic_unavailable"
+
+
 class NotFoundError(NexFlowError):
     status_code = 404
     code = "not_found"

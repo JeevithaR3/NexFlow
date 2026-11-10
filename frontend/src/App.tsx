@@ -4,10 +4,12 @@ import MapPage from "./pages/MapPage";
 import Scenario from "./pages/Scenario";
 import Memory from "./pages/Memory";
 import Models from "./pages/Models";
+import BengaluruTraffic from "./pages/BengaluruTraffic";
 
 const NAV = [
   { to: "/", label: "Overview", end: true },
   { to: "/map", label: "Traffic map" },
+  { to: "/bengaluru", label: "Bengaluru live" },
   { to: "/scenario", label: "Scenario simulation" },
   { to: "/memory", label: "Experience memory" },
   { to: "/models", label: "Model evaluation" },
@@ -28,13 +30,14 @@ export default function App() {
           ))}
         </nav>
         <p className="mt-6 hidden text-xs leading-relaxed text-slate-400 md:block">
-          All data comes from a synthetic SUMO network. Recommendations are simulated only and never control real signals.
+          Bengaluru live readings are separate from the synthetic SUMO twin. Recommendations are simulated only and never control real signals.
         </p>
       </aside>
       <main className="mx-auto w-full max-w-7xl flex-1 space-y-4 p-4 md:p-6">
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/map" element={<MapPage />} />
+          <Route path="/bengaluru" element={<BengaluruTraffic />} />
           <Route path="/scenario" element={<Scenario />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/models" element={<Models />} />

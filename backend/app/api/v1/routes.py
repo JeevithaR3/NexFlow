@@ -8,7 +8,13 @@ from sqlalchemy import select
 
 from app import __version__
 from app.benchmark.runner import run_benchmark
-from app.core.errors import ConflictError, DataValidationError, ModelNotTrainedError, NotFoundError
+from app.core.errors import (
+    ConflictError,
+    DataValidationError,
+    LiveTrafficUnavailableError,
+    ModelNotTrainedError,
+    NotFoundError,
+)
 from app.digital_twin.congestion import COLORS, HIGH_MIN, LOW_MAX, distribution, level_of
 from app.experience_memory.compat import QueryContext
 from app.experience_memory.features import FEATURE_SCHEMA_VERSION, build_state_vector
@@ -106,6 +112,31 @@ def traffic_predictions(s: AppState = Depends(state)):
         "edges": [{k: e[k] for k in ("id", "ci", "level", "pred_ci", "pred_level", "delta_ci")} for e in snap["edges"]],
         "intervention": snap["intervention"], "scenario": snap["scenario"],
     }
+
+
+@router.get("/traffic/bengaluru")
+def bengaluru_traffic(s: AppState = Depends(state)):
+    return s.traffic.snapshot()
+
+
+@router.get("/traffic/bengaluru/history")
+def bengaluru_traffic_history(
+    sensor_id: str | None = None,
+    limit: int = Query(1000, ge=1, le=5000),
+    s: AppState = Depends(state),
+):
+    return {"readings": s.traffic.history(sensor_id=sensor_id, limit=limit)}
+
+
+@router.post("/traffic/bengaluru/poll")
+def poll_bengaluru_traffic(s: AppState = Depends(state)):
+    result = s.traffic.poll_once()
+    if result["saved_readings"] == 0:
+        raise LiveTrafficUnavailableError(
+            "TomTom did not return traffic readings for the monitored Bengaluru roads.",
+            hint="Check the API key, account quota, and TomTom service availability.",
+        )
+    return result
 
 
 # ---- runs ----------------------------------------------------------------------------------

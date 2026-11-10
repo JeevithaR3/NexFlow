@@ -1,7 +1,7 @@
 # NexFlow: traffic prediction and digital twin (academic prototype)
 
 GNN forecasting of congestion → Digital Twin state → Experience Memory (FAISS) → SUMO/TraCI verification and search of signal-timing plans → React dashboard.
-**All data is synthetic**, produced by SUMO on a generated 3×3 signalised grid. Recommendations are simulated only and never touch real signals.
+The SUMO/GNN/digital-twin pipeline uses synthetic data from a generated 3×3 signalised grid. The optional **Bengaluru live** page separately collects TomTom traffic-flow readings for five named road points and stores a rolling local history. Those live readings are not fed into the synthetic GNN or SUMO model. Recommendations are simulated only and never touch real signals.
 The Experience-Memory idea is our *proposed efficiency improvement*; it is not claimed to be novel, and its benefit is only what `scripts/run_benchmark.py` measures.
 
 ## Status (what is implemented and verified)
@@ -13,8 +13,9 @@ The Experience-Memory idea is our *proposed efficiency improvement*; it is not c
 | Experience Memory (SQLite + FAISS, compatibility checks, SUMO re-verification) | implemented |
 | Decision engine + A-vs-B benchmark | implemented; benchmark run once (results below) |
 | FastAPI (`/api/v1`) | implemented, tested over HTTP with real SUMO |
-| React frontend (5 pages) | implemented; all pages screenshotted against the live API |
-| Tests | backend 38 pass (pytest); frontend 6 pass (vitest); type-check and build pass |
+| TomTom Bengaluru corridor collector | optional; polls five road points and retains 30 days locally when an API key is configured |
+| React frontend (6 pages) | includes a separate Bengaluru live-data view; other simulation/model pages remain synthetic |
+| Tests | backend 42 pass (pytest); frontend 6 pass (vitest); type-check and build pass |
 | Limits | one benchmark run on one machine; no CI; no browser-compat testing beyond headless Chromium; OSM tiles need internet |
 
 ### Measured results (synthetic data, one machine; indicative only)
@@ -32,6 +33,18 @@ pip install -r backend\requirements.txt
 cd frontend ; npm install ; cd ..
 ```
 Linux/macOS: `python3.11 -m venv .venv && source .venv/bin/activate && pip install -r backend/requirements.txt && (cd frontend && npm install)`
+
+## Optional Bengaluru live traffic
+The **Bengaluru live** page uses TomTom's [Flow Segment Data API](https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/traffic-flow/flow-segment-data) to sample the nearest road segment at MG Road, Indiranagar, Whitefield, Koramangala and Silk Board. It polls every five minutes by default, persists observations in the local SQLite database, and removes readings older than 30 days. The API key stays in the backend; it is never sent to the browser or written into the database.
+
+Create a root `.env` file (already gitignored) and add your TomTom key:
+```
+NEXFLOW_TOMTOM_API_KEY=your_tomtom_api_key
+NEXFLOW_TRAFFIC_POLL_INTERVAL_S=300
+```
+Restart the backend. Collection starts automatically; **Bengaluru live → Poll now** also requests an immediate sample. Each poll makes one TomTom request per road point. Without a key, the page remains available and explains how to configure the feed.
+
+This is a live feed for the five configured sample points, not a citywide traffic feed. Road labels and coordinates are fixed in `backend/app/services/tomtom_traffic.py`. The existing **Traffic map**, GNN forecasts, SUMO scenarios and benchmarks still use the synthetic grid; live TomTom data is deliberately kept separate and is not evidence of model accuracy.
 
 ## Run
 ```
@@ -65,7 +78,7 @@ Live prediction, scenario simulation, decisions, benchmark, dataset generation. 
 * Basemap blank offline: untick "OSM basemap"; the synthetic grid is not aligned with real OSM streets.
 
 Before the demo (10 minutes)
-Start the backend and the frontend, and open http://localhost:5173. The backend takes about 30 s the first time because PyTorch loads slowly.
+Start the backend and the frontend, and open http://localhost:5173. The backend takes about 30 s the first time because PyTorch loads slowly. If TomTom is configured, open **Bengaluru live** first to show actual provider readings; otherwise the page explicitly shows that live traffic is not configured.
 Do a trial run of the full flow so nothing is cold. Run a prediction on Overview, then “Find best intervention” on the Scenario page once. That also puts one entry in the Experience Memory.
 Untick “OSM basemap” if the venue’s internet is unreliable. The map is a synthetic grid anyway.
 Keep the benchmark result visible on the Memory page. It is already loaded.
@@ -106,6 +119,6 @@ Memory: memory is our proposed efficiency idea, not a novel invention. The bench
 Safety: all recommendations are simulated. Nothing controls a real signal.
 Likely questions
 “Why not just trust the retrieved plan?” Similarity doesn’t prove a plan works. Every retrieved plan passes compatibility checks and is then verified in SUMO.
-“Is this a digital twin?” It holds validated network state synced from SUMO runs, the forecast and the chosen intervention. It is a lightweight twin, not a live city feed.
-“What would real data need?” The schema is in app/ml/real_data.py: observations, sensors and links as CSV files.
+“Is this a digital twin?” The SUMO component holds validated synthetic network state and tested interventions. The separate Bengaluru page shows live TomTom observations, but those observations are not currently connected to the GNN twin or SUMO.
+“Does the model use live Bengaluru traffic?” No. The TomTom collector builds a separate local history; the forecast model remains trained and evaluated on synthetic SUMO data.
 “Why is the GNN no better than the median?” The per-interval congestion target is noisy. Name this as the main limitation.
