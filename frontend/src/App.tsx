@@ -5,11 +5,12 @@ import Scenario from "./pages/Scenario";
 import Memory from "./pages/Memory";
 import Models from "./pages/Models";
 import BengaluruTraffic from "./pages/BengaluruTraffic";
+import CityTrafficContext from "./components/CityTrafficContext";
 
 const NAV = [
   { to: "/", label: "Overview", end: true },
   { to: "/map", label: "Traffic map" },
-  { to: "/bengaluru", label: "Bengaluru live" },
+  { to: "/bengaluru", label: "Traffic history" },
   { to: "/scenario", label: "Scenario simulation" },
   { to: "/memory", label: "Experience memory" },
   { to: "/models", label: "Model evaluation" },
@@ -30,10 +31,11 @@ export default function App() {
           ))}
         </nav>
         <p className="mt-6 hidden text-xs leading-relaxed text-slate-400 md:block">
-          Bengaluru live readings are separate from the synthetic SUMO twin. Recommendations are simulated only and never control real signals.
+          Live Bengaluru readings provide shared city context. Forecasts and interventions are evaluated in SUMO simulations; no real signals are controlled.
         </p>
       </aside>
       <main className="mx-auto w-full max-w-7xl flex-1 space-y-4 p-4 md:p-6">
+        <CityTrafficContext />
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/map" element={<MapPage />} />

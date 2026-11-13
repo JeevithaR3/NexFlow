@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from "react-leaflet";
+import { Link } from "react-router-dom";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
 import { ApiError, LiveTrafficReading, api } from "../api/client";
 import { useAsync } from "../hooks/useAsync";
@@ -63,12 +64,16 @@ export default function BengaluruTraffic() {
     <>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Bengaluru live traffic</h1>
-          <p className="text-sm text-slate-600">Continuously collected TomTom flow readings on selected city corridors.</p>
+          <h1 className="text-2xl font-semibold">Bengaluru traffic history</h1>
+          <p className="text-sm text-slate-600">History for the same live TomTom dataset shown on the Traffic map.</p>
         </div>
-        <Button onClick={refresh} disabled={polling || !status.data?.configured}>
-          {polling ? "Polling…" : "Poll now"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Link className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            to="/map?source=bengaluru">Open live map</Link>
+          <Button onClick={refresh} disabled={polling || !status.data?.configured}>
+            {polling ? "Polling…" : "Poll now"}
+          </Button>
+        </div>
       </header>
       <div role="note" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-900">
         Live TomTom observations are collected independently of the synthetic SUMO/GNN demo. This page shows the monitored road points only; it is not a citywide feed, and no live reading controls a signal.
@@ -91,7 +96,7 @@ export default function BengaluruTraffic() {
             <Stat label="Last collection" value={status.data.last_poll_at ? localTime(status.data.last_poll_at) : "—"} />
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card title="Live road segments" className="lg:col-span-2">
+            <Card title="Same Bengaluru live map layer" className="lg:col-span-2">
               <MapContainer center={[12.95, 77.65]} zoom={11.5} scrollWheelZoom style={{ height: 500, width: "100%" }}>
                 <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 {sensors.map((sensor) => {

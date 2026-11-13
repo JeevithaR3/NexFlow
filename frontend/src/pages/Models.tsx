@@ -16,6 +16,9 @@ export default function Models() {
         <h1 className="text-2xl font-semibold">Model evaluation</h1>
         <p className="text-sm text-slate-600">Trained and evaluated on synthetic SUMO data only. These numbers say nothing about real-world accuracy.</p>
       </header>
+      <div role="note" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+        TomTom observations are shared elsewhere in the dashboard for real-time context. They are not part of this model’s training or evaluation dataset.
+      </div>
       <ErrorBox error={m.error} />
       {m.loading && !d ? <Loading /> : !d?.available ? <Empty title="No trained model">{d?.reason}</Empty> : (
         <>

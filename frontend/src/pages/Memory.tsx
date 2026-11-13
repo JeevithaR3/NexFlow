@@ -27,6 +27,9 @@ export default function Memory() {
         <h1 className="text-2xl font-semibold">Experience memory</h1>
         <p className="text-sm text-slate-600">Past decisions are retrieved by FAISS similarity, filtered by compatibility checks, and always re-verified in SUMO before use. Similarity alone never proves that a plan will work.</p>
       </header>
+      <div role="note" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+        This memory contains SUMO-tested experiences for the synthetic network. The shared Bengaluru live readings are shown for city context, but are not used to retrieve or verify these plans.
+      </div>
       {st && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Stat label="Stored" value={st.experiences} /><Stat label="Improving" value={st.improved} />

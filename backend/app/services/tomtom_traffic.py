@@ -18,6 +18,7 @@ from app.models.db import Database, LiveTrafficReadingRow
 log = get_logger("tomtom_traffic")
 
 FLOW_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
+ROUTE_URL = "https://api.tomtom.com/routing/1/calculateRoute"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,41 @@ def _row_dict(row: LiveTrafficReadingRow) -> dict:
         "road_closure": row.road_closure,
         "geometry": row.geometry,
     }
+
+
+def _level_for_speed(speed_kph: float, free_flow_speed_kph: float) -> str:
+    ratio = speed_kph / free_flow_speed_kph
+    return "low" if ratio >= 0.8 else "moderate" if ratio >= 0.5 else "high"
+
+
+def _point_polyline_distance_m(point: list[float], line: list[list[float]]) -> float:
+    """Approximate local distance in meters for the short Bengaluru road segments."""
+    if not line:
+        return math.inf
+    latitude_scale = 111_320.0
+    longitude_scale = latitude_scale * math.cos(math.radians(point[0]))
+    px, py = point[1] * longitude_scale, point[0] * latitude_scale
+    if len(line) == 1:
+        return math.hypot(px - line[0][1] * longitude_scale, py - line[0][0] * latitude_scale)
+
+    nearest = math.inf
+    for start, end in zip(line, line[1:]):
+        ax, ay = start[1] * longitude_scale, start[0] * latitude_scale
+        bx, by = end[1] * longitude_scale, end[0] * latitude_scale
+        dx, dy = bx - ax, by - ay
+        length_squared = dx * dx + dy * dy
+        fraction = 0.0 if length_squared == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_squared))
+        nearest = min(nearest, math.hypot(px - (ax + fraction * dx), py - (ay + fraction * dy)))
+    return nearest
+
+
+def _geometries_match(first: list[list[float]] | None, second: list[list[float]], tolerance_m: float = 50.0) -> bool:
+    if not first or len(first) < 2 or len(second) < 2:
+        return False
+    return (
+        min(_point_polyline_distance_m(point, second) for point in first) <= tolerance_m
+        or min(_point_polyline_distance_m(point, first) for point in second) <= tolerance_m
+    )
 
 
 class TomTomTrafficCollector:
@@ -228,6 +264,245 @@ class TomTomTrafficCollector:
             }
         finally:
             self._poll_lock.release()
+
+    def route_options(self, origin_id: str, destination_id: str) -> dict:
+        if not self.api_key:
+            raise LiveTrafficUnavailableError(
+                "TomTom live routing is not configured.",
+                hint="Set NEXFLOW_TOMTOM_API_KEY in the backend environment and restart the API.",
+            )
+        if origin_id not in _SENSOR_BY_ID or destination_id not in _SENSOR_BY_ID:
+            raise DataValidationError("Choose an origin and destination from the monitored Bengaluru corridors.")
+        if origin_id == destination_id:
+            raise DataValidationError("Choose two different roads for the trip.")
+
+        origin, destination = _SENSOR_BY_ID[origin_id], _SENSOR_BY_ID[destination_id]
+        locations = (
+            f"{origin.latitude},{origin.longitude}:"
+            f"{destination.latitude},{destination.longitude}"
+        )
+        try:
+            with self._client_factory() as client:
+                response = client.get(
+                    f"{ROUTE_URL}/{locations}/json",
+                    params={
+                        "key": self.api_key,
+                        "traffic": "true",
+                        "routeType": "fastest",
+                        "maxAlternatives": 2,
+                        "computeTravelTimeFor": "all",
+                        "routeRepresentation": "polyline",
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            log.warning("TomTom live route request failed", extra={"status": status})
+            raise LiveTrafficUnavailableError(
+                f"TomTom live routing returned HTTP {status}.",
+                hint="Check that your API key and TomTom account have access to the Routing API.",
+            ) from exc
+        except httpx.RequestError as exc:
+            log.warning("TomTom live route request could not connect")
+            raise LiveTrafficUnavailableError(
+                "Could not connect to TomTom live routing.",
+                hint="Check the backend internet connection and try again.",
+            ) from exc
+        except ValueError as exc:
+            raise DataValidationError("TomTom returned invalid route JSON.") from exc
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("routes"), list):
+            raise DataValidationError("TomTom route response is missing routes.")
+        routes = []
+        for index, route in enumerate(payload["routes"]):
+            if not isinstance(route, dict) or not isinstance(route.get("summary"), dict):
+                raise DataValidationError("TomTom returned a route without a summary.")
+            summary = route["summary"]
+            legs = route.get("legs")
+            if not isinstance(legs, list):
+                raise DataValidationError("TomTom returned a route without geometry.")
+            geometry = []
+            for leg in legs:
+                if not isinstance(leg, dict) or not isinstance(leg.get("points"), list):
+                    raise DataValidationError("TomTom returned invalid route geometry.")
+                for point in leg["points"]:
+                    if not isinstance(point, dict):
+                        raise DataValidationError("TomTom returned invalid route geometry.")
+                    lat = self._number(point, "latitude", minimum=-90)
+                    lon = self._number(point, "longitude", minimum=-180)
+                    if lat > 90 or lon > 180:
+                        raise DataValidationError("TomTom returned invalid route geometry.")
+                    geometry.append([lat, lon])
+            if len(geometry) < 2:
+                raise DataValidationError("TomTom route geometry must contain at least two points.")
+
+            distance_m = self._number(summary, "lengthInMeters")
+            travel_time_s = self._number(summary, "travelTimeInSeconds")
+            traffic_delay = summary.get("trafficDelayInSeconds")
+            if traffic_delay is not None:
+                traffic_delay = self._number({"trafficDelayInSeconds": traffic_delay}, "trafficDelayInSeconds")
+            routes.append({
+                "rank": index + 1,
+                "label": "Fastest with current traffic" if index == 0 else f"Alternative {index}",
+                "distance_m": distance_m,
+                "travel_time_s": travel_time_s,
+                "traffic_delay_s": traffic_delay,
+                "geometry": geometry,
+            })
+        if not routes:
+            raise LiveTrafficUnavailableError(
+                "TomTom did not find a route for the selected Bengaluru trip.",
+                hint="Choose different monitored roads and try again.",
+            )
+        predictions = {
+            forecast["sensor_id"]: forecast
+            for forecast in self.predictions()["sensors"]
+            if forecast["available"]
+        }
+        for route in routes:
+            matched = [
+                forecast for forecast in predictions.values()
+                if _geometries_match(forecast["geometry"], route["geometry"])
+            ]
+            adjustment = 0.0
+            for forecast in matched:
+                latest = forecast["latest"]
+                predicted_speed = forecast["predicted_speed_kph"]
+                if latest["road_closure"] or predicted_speed <= 0.1:
+                    adjustment += latest["current_travel_time_s"] * 4
+                    continue
+                if latest["current_speed_kph"] <= 0.1:
+                    continue
+                current_segment_time = latest["current_travel_time_s"]
+                predicted_segment_time = current_segment_time * latest["current_speed_kph"] / predicted_speed
+                adjustment += predicted_segment_time - current_segment_time
+
+            route["forecast_sensor_ids"] = [forecast["sensor_id"] for forecast in matched]
+            route["forecast_sensor_count"] = len(matched)
+            route["forecast_adjustment_s"] = adjustment
+
+        forecast_available = any(route["forecast_sensor_count"] for route in routes)
+        for route in routes:
+            route["predicted_travel_time_s"] = (
+                max(0.0, route["travel_time_s"] + route["forecast_adjustment_s"])
+                if forecast_available else None
+            )
+            if not forecast_available:
+                route["forecast_adjustment_s"] = None
+
+        if forecast_available:
+            routes.sort(key=lambda route: (route["predicted_travel_time_s"], route["travel_time_s"]))
+            for recommendation_rank, route in enumerate(routes, start=1):
+                route["recommendation_rank"] = recommendation_rank
+                route["recommended"] = recommendation_rank == 1
+        else:
+            for route in routes:
+                route["recommendation_rank"] = None
+                route["recommended"] = False
+
+        if forecast_available:
+            notice = (
+                "TomTom provides the current-traffic route ETAs. NexFlow ranks routes using trend forecasts for "
+                "monitored road segments that match each route; unmonitored portions retain TomTom's current ETA. "
+                "This is a limited history-based estimate, not the synthetic GNN or a full-trip forecast."
+            )
+        elif predictions:
+            notice = (
+                "TomTom provides current-traffic route ETAs, but none of the available forecast geometries matched "
+                "these routes. NexFlow cannot rank them by forecast for this trip."
+            )
+        else:
+            notice = (
+                "TomTom provides current-traffic route ETAs. NexFlow cannot rank these routes by forecast yet; "
+                "collect at least three readings spanning two poll intervals for the monitored roads."
+            )
+
+        return {
+            "provider": "TomTom Routing API",
+            "source": "live_traffic_routing",
+            "traffic_aware": True,
+            "forecast_source": "tomtom_history_trend" if forecast_available else None,
+            "origin": {"id": origin.id, "road_name": origin.road_name, "latitude": origin.latitude, "longitude": origin.longitude},
+            "destination": {
+                "id": destination.id,
+                "road_name": destination.road_name,
+                "latitude": destination.latitude,
+                "longitude": destination.longitude,
+            },
+            "requested_at": _iso_now(),
+            "routes": routes,
+            "notice": notice,
+        }
+
+    def predictions(self, horizon_s: int = 900) -> dict:
+        if horizon_s < 1:
+            raise DataValidationError("Prediction horizon must be positive.")
+        forecasts = []
+        with self.db.session() as session:
+            for sensor in SENSORS:
+                rows = list(session.scalars(
+                    select(LiveTrafficReadingRow)
+                    .where(LiveTrafficReadingRow.sensor_id == sensor.id)
+                    .order_by(LiveTrafficReadingRow.observed_at.desc())
+                    .limit(6)
+                ))
+                readings = [_row_dict(row) for row in reversed(rows)]
+                available = len(readings) >= 3
+                parsed_times = [datetime.fromisoformat(row["observed_at"]) for row in readings]
+                span_s = (parsed_times[-1] - parsed_times[0]).total_seconds() if len(parsed_times) >= 2 else 0.0
+                available = available and span_s >= 2 * self.poll_interval_s
+                latest_age_s = (
+                    max(0.0, (datetime.now(timezone.utc) - parsed_times[-1].astimezone(timezone.utc)).total_seconds())
+                    if parsed_times else None
+                )
+                available = available and latest_age_s is not None and latest_age_s <= 2 * self.poll_interval_s
+                latest = readings[-1] if readings else None
+                forecast = {
+                    "sensor_id": sensor.id,
+                    "road_name": sensor.road_name,
+                    "available": available,
+                    "reason": None if available else "Collect three recent readings spanning two poll intervals.",
+                    "sample_count": len(readings),
+                    "history_span_s": max(0.0, span_s),
+                    "latest_age_s": latest_age_s,
+                    "latest": latest,
+                    "geometry": latest["geometry"] if latest else None,
+                    "predicted_speed_kph": None,
+                    "predicted_travel_time_s": None,
+                    "congestion_level": None,
+                }
+                if available and latest:
+                    times = [(timestamp - parsed_times[0]).total_seconds() for timestamp in parsed_times]
+                    ratios = [row["current_speed_kph"] / row["free_flow_speed_kph"] for row in readings]
+                    mean_time = sum(times) / len(times)
+                    mean_ratio = sum(ratios) / len(ratios)
+                    variance = sum((time - mean_time) ** 2 for time in times)
+                    slope = (
+                        sum((time - mean_time) * (ratio - mean_ratio) for time, ratio in zip(times, ratios)) / variance
+                        if variance > 0 else 0.0
+                    )
+                    predicted_ratio = max(0.0, min(1.0, mean_ratio + slope * (times[-1] + horizon_s - mean_time)))
+                    predicted_speed = predicted_ratio * latest["free_flow_speed_kph"]
+                    forecast.update({
+                        "predicted_speed_kph": predicted_speed,
+                        "predicted_travel_time_s": (
+                            latest["current_travel_time_s"] * latest["current_speed_kph"] / predicted_speed
+                            if predicted_speed > 0.1 else None
+                        ),
+                        "congestion_level": _level_for_speed(predicted_speed, latest["free_flow_speed_kph"]),
+                    })
+                forecasts.append(forecast)
+        return {
+            "available": any(forecast["available"] for forecast in forecasts),
+            "source": "tomtom_history_trend",
+            "method": "Linear trend of speed/free-flow ratio over up to six recent TomTom readings, clamped to 0-100% of free-flow speed.",
+            "horizon_s": horizon_s,
+            "minimum_samples": 3,
+            "minimum_history_span_s": 2 * self.poll_interval_s,
+            "maximum_latest_age_s": 2 * self.poll_interval_s,
+            "sensors": forecasts,
+        }
 
     def snapshot(self) -> dict:
         latest = {}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, ScenarioIn } from "../api/client";
 import { useAsync, useRunner } from "../hooks/useAsync";
 import { ScenarioFields } from "../components/PredictPanel";
@@ -75,6 +76,10 @@ export default function Scenario() {
         <h1 className="text-2xl font-semibold">Scenario simulation</h1>
         <p className="text-sm text-slate-600">Every run below is a real SUMO simulation of the same demand, with and without the change. Nothing is applied to real signals.</p>
       </header>
+      <div role="note" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+        The shared Bengaluru readings in the header provide real-world context. These intervention tests still run on the synthetic SUMO grid; TomTom observations are not converted into traffic demand or signal plans.
+        <Link className="ml-1 font-medium underline" to="/map?source=bengaluru">View live corridors</Link>
+      </div>
       <Card title="Scenario"><ScenarioFields value={sc} onChange={setSc} /></Card>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="1. Test a signal-timing change">

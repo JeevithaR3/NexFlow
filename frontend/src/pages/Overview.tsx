@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, Level } from "../api/client";
 import { useAsync } from "../hooks/useAsync";
@@ -8,6 +10,11 @@ export default function Overview() {
   const health = useAsync(() => api.health());
   const cur = useAsync(() => api.trafficCurrent());
   const evalm = useAsync(() => api.modelEvaluation());
+  const live = useAsync(() => api.bengaluruTraffic());
+  useEffect(() => {
+    const timer = window.setInterval(live.reload, 60_000);
+    return () => window.clearInterval(timer);
+  }, [live.reload]);
   const reloadAll = () => { health.reload(); cur.reload(); };
   const h = health.data;
   const t = cur.data;
@@ -31,6 +38,28 @@ export default function Overview() {
           <Stat label="Forecast model" value={<Badge tone={h.model.loaded ? "green" : "amber"}>{h.model.loaded ? "loaded" : "not trained"}</Badge>} hint={h.model.version ?? h.model.hint} />
         </div>
       )}
+      <Card title="Shared Bengaluru live context" right={<Link className="text-xs font-medium text-teal-800 underline" to="/map?source=bengaluru">Open on traffic map</Link>}>
+        {live.loading && !live.data ? <Loading /> : live.error ? <ErrorBox error={live.error} /> : live.data ? (
+          <>
+            <p className="mb-3 text-xs text-slate-600">
+              {live.data.configured
+                ? `${live.data.sensors.filter((sensor) => sensor.latest).length} of ${live.data.sensors.length} monitored roads have readings. This live data is context; the forecast below remains trained on synthetic SUMO data.`
+                : "TomTom is not configured. The SUMO forecast below remains available as a separate simulated dataset."}
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              {live.data.sensors.map((sensor) => (
+                <div key={sensor.id} className="rounded-lg bg-slate-50 p-2 text-sm">
+                  <div className="truncate text-xs text-slate-500">{sensor.road_name}</div>
+                  {sensor.latest
+                    ? <div className="font-semibold">{num(sensor.latest.current_speed_kph, 1)} <span className="text-xs font-normal text-slate-500">km/h</span></div>
+                    : <div className="text-xs text-slate-400">Waiting for reading</div>}
+                </div>
+              ))}
+            </div>
+            {live.data.last_poll_at && <p className="mt-2 text-xs text-slate-500">Last collected {new Date(live.data.last_poll_at).toLocaleString()}</p>}
+          </>
+        ) : null}
+      </Card>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Congestion distribution (road segments)" className="lg:col-span-2">
           {cur.loading && !t ? <Loading /> : !t?.available ? (

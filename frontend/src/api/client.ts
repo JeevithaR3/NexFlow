@@ -77,6 +77,56 @@ export interface LiveTrafficStatus {
   sensors: LiveTrafficSensor[];
 }
 
+export interface LiveTrafficPrediction {
+  sensor_id: string;
+  road_name: string;
+  available: boolean;
+  reason: string | null;
+  sample_count: number;
+  history_span_s: number;
+  geometry: [number, number][] | null;
+  predicted_speed_kph: number | null;
+  predicted_travel_time_s: number | null;
+  congestion_level: Level | null;
+}
+
+export interface LiveTrafficPredictions {
+  available: boolean;
+  source: "tomtom_history_trend";
+  method: string;
+  horizon_s: number;
+  minimum_samples: number;
+  minimum_history_span_s: number;
+  sensors: LiveTrafficPrediction[];
+}
+
+export interface LiveRouteOption {
+  rank: number;
+  label: string;
+  distance_m: number;
+  travel_time_s: number;
+  traffic_delay_s: number | null;
+  geometry: [number, number][];
+  predicted_travel_time_s: number | null;
+  forecast_adjustment_s: number | null;
+  forecast_sensor_ids: string[];
+  forecast_sensor_count: number;
+  recommendation_rank: number | null;
+  recommended: boolean;
+}
+
+export interface LiveTrafficRoutes {
+  provider: string;
+  source: "live_traffic_routing";
+  traffic_aware: boolean;
+  forecast_source: "tomtom_history_trend" | null;
+  origin: { id: string; road_name: string; latitude: number; longitude: number };
+  destination: { id: string; road_name: string; latitude: number; longitude: number };
+  requested_at: string;
+  routes: LiveRouteOption[];
+  notice: string;
+}
+
 const get = <T = any>(url: string, params?: object) => http.get<T>(url, { params }).then((r) => r.data);
 const post = <T = any>(url: string, body?: object) => http.post<T>(url, body).then((r) => r.data);
 
@@ -86,8 +136,11 @@ export const api = {
   trafficCurrent: () => get("/api/v1/traffic/current"),
   trafficPredictions: () => get("/api/v1/traffic/predictions"),
   bengaluruTraffic: () => get<LiveTrafficStatus>("/api/v1/traffic/bengaluru"),
+  bengaluruPredictions: () => get<LiveTrafficPredictions>("/api/v1/traffic/bengaluru/predictions"),
   bengaluruTrafficHistory: (limit = 1000) => get<{ readings: LiveTrafficReading[] }>("/api/v1/traffic/bengaluru/history", { limit }),
   pollBengaluruTraffic: () => post<{ status: string; observed_at: string; saved_readings: number; failures: { sensor_id: string; message: string }[] }>("/api/v1/traffic/bengaluru/poll"),
+  bengaluruRoutes: (origin_id: string, destination_id: string) =>
+    get<LiveTrafficRoutes>("/api/v1/traffic/bengaluru/routes", { origin_id, destination_id }),
   runPrediction: (scenario: ScenarioIn, mode: "sumo" | "dataset_replay") => post<{ run_id: string }>("/api/v1/predictions/run", { scenario, mode }),
   runSimulation: (scenario: ScenarioIn, intervention: object | null) => post<{ run_id: string }>("/api/v1/simulations/run", { scenario, intervention }),
   evaluate: (body: object) => post<{ run_id: string }>("/api/v1/interventions/evaluate", body),

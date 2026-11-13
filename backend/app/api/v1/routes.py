@@ -119,6 +119,11 @@ def bengaluru_traffic(s: AppState = Depends(state)):
     return s.traffic.snapshot()
 
 
+@router.get("/traffic/bengaluru/predictions")
+def bengaluru_traffic_predictions(s: AppState = Depends(state)):
+    return s.traffic.predictions()
+
+
 @router.get("/traffic/bengaluru/history")
 def bengaluru_traffic_history(
     sensor_id: str | None = None,
@@ -137,6 +142,15 @@ def poll_bengaluru_traffic(s: AppState = Depends(state)):
             hint="Check the API key, account quota, and TomTom service availability.",
         )
     return result
+
+
+@router.get("/traffic/bengaluru/routes")
+def bengaluru_live_routes(
+    origin_id: str = Query(..., min_length=1, max_length=40),
+    destination_id: str = Query(..., min_length=1, max_length=40),
+    s: AppState = Depends(state),
+):
+    return s.traffic.route_options(origin_id, destination_id)
 
 
 # ---- runs ----------------------------------------------------------------------------------
