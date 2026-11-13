@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { useAsync } from "../hooks/useAsync";
 import BenchmarkPanel from "../components/BenchmarkPanel";
-import { Badge, Button, Card, Empty, ErrorBox, Loading, Stat, num, pct } from "../components/ui";
+import { ErrorBox, num, pct } from "../components/ui";
 
 export default function Memory() {
   const exp = useAsync(() => api.experiences());
@@ -12,78 +12,263 @@ export default function Memory() {
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+
   const rows = exp.data?.experiences ?? [];
   const st = exp.data?.stats;
 
   const search = async () => {
-    setBusy(true); setErr(null);
-    try { setRes(await api.searchExperiences({ source, experience_id: source === "experience" ? expId || rows[0]?.experience_id : undefined, threshold: thr, k: 5 })); }
-    catch (e) { setErr(e); setRes(null); } finally { setBusy(false); }
+    setBusy(true);
+    setErr(null);
+    try {
+      setRes(
+        await api.searchExperiences({
+          source,
+          experience_id: source === "experience" ? expId || rows[0]?.experience_id : undefined,
+          threshold: thr,
+          k: 5,
+        })
+      );
+    } catch (e) {
+      setErr(e);
+      setRes(null);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <>
-      <header>
-        <h1 className="text-2xl font-semibold">Experience memory</h1>
-        <p className="text-sm text-slate-600">Past decisions are retrieved by FAISS similarity, filtered by compatibility checks, and always re-verified in SUMO before use. Similarity alone never proves that a plan will work.</p>
-      </header>
-      <div role="note" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
-        This memory contains SUMO-tested experiences for the synthetic network. The shared Bengaluru live readings are shown for city context, but are not used to retrieve or verify these plans.
+    <div className="space-y-6">
+      {/* Top Header */}
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight text-white md:text-3xl">
+          Experience Memory Bank
+        </h1>
+        <p className="mt-1 text-xs font-medium text-slate-400 md:text-sm">
+          Case-based traffic policy memory indexed via FAISS vector similarity and guaranteed by SUMO re-verification
+        </p>
       </div>
+
+      {/* Real-World Context Callout Banner */}
+      <div
+        role="note"
+        className="rounded-2xl border border-blue-500/20 bg-gradient-to-r from-[#0c1427] to-[#080d1a] p-3.5 text-xs text-slate-300 shadow-md backdrop-blur-md"
+      >
+        <div className="flex items-center gap-2">
+          <span className="flex h-2 w-2 rounded-full bg-cyan-400" />
+          <span className="font-semibold text-white">Digital Twin Synthetic Provenance:</span>
+        </div>
+        <p className="mt-1 text-slate-400 leading-relaxed">
+          This memory contains SUMO-tested experiences for the synthetic network. Shared Bengaluru live readings provide city context, but are not used to retrieve or verify these signal timing policies.
+        </p>
+      </div>
+
+      {/* 5 KPI Stat Cards */}
       {st && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <Stat label="Stored" value={st.experiences} /><Stat label="Improving" value={st.improved} />
-          <Stat label="Indexed vectors" value={st.indexed_vectors} hint={st.index_in_sync ? "index in sync" : "OUT OF SYNC"} />
-          <Stat label="Verified reuses" value={st.verified_reuses} /><Stat label="Failed verifications" value={st.failed_verifications} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-b from-[#0e1628] to-[#0a1120] p-4 shadow-xl">
+            <div className="text-[11px] font-semibold tracking-wider uppercase text-slate-400">Stored Plans</div>
+            <div className="mt-2 font-mono text-2xl font-extrabold text-white">{st.experiences}</div>
+            <div className="mt-1 text-[11px] text-slate-500">Indexed policy cases</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-b from-[#0e1628] to-[#0a1120] p-4 shadow-xl">
+            <div className="text-[11px] font-semibold tracking-wider uppercase text-slate-400">Improving Plans</div>
+            <div className="mt-2 font-mono text-2xl font-extrabold text-emerald-400">{st.improved}</div>
+            <div className="mt-1 text-[11px] text-slate-500">Measurable benefit</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-b from-[#0e1628] to-[#0a1120] p-4 shadow-xl">
+            <div className="text-[11px] font-semibold tracking-wider uppercase text-slate-400">FAISS Index</div>
+            <div className="mt-2 font-mono text-2xl font-extrabold text-cyan-400">{st.indexed_vectors}</div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {st.index_in_sync ? "Vectors synchronized" : "Sync required"}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-b from-[#0e1628] to-[#0a1120] p-4 shadow-xl">
+            <div className="text-[11px] font-semibold tracking-wider uppercase text-slate-400">Verified Reuses</div>
+            <div className="mt-2 font-mono text-2xl font-extrabold text-white">{st.verified_reuses}</div>
+            <div className="mt-1 text-[11px] text-slate-500">Successful SUMO re-checks</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-b from-[#0e1628] to-[#0a1120] p-4 shadow-xl">
+            <div className="text-[11px] font-semibold tracking-wider uppercase text-slate-400">Rejected Checks</div>
+            <div className="mt-2 font-mono text-2xl font-extrabold text-rose-400">{st.failed_verifications}</div>
+            <div className="mt-1 text-[11px] text-slate-500">Guardrail dropouts</div>
+          </div>
         </div>
       )}
-      <Card title="Search similar experiences">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-xs text-slate-600">Query state
-            <select className="mt-1 block rounded border border-slate-300 p-1.5 text-sm" value={source} onChange={(e) => setSource(e.target.value as any)}>
-              <option value="current">Current digital-twin state</option><option value="experience">A stored experience</option></select></label>
-          {source === "experience" && (
-            <label className="text-xs text-slate-600">Experience
-              <select className="mt-1 block rounded border border-slate-300 p-1.5 text-sm" value={expId} onChange={(e) => setExpId(e.target.value)}>
-                {rows.map((r: any) => <option key={r.experience_id} value={r.experience_id}>{r.experience_id} · {r.scenario_id}</option>)}</select></label>)}
-          <label className="text-xs text-slate-600">Similarity threshold ({thr.toFixed(2)})
-            <input type="range" className="mt-2 block" min={0.5} max={1} step={0.01} value={thr} onChange={(e) => setThr(Number(e.target.value))} /></label>
-          <Button onClick={search} disabled={busy || rows.length === 0 && source === "experience"}>Search</Button>
+
+      {/* Vector Retrieval Console */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1322] p-5 shadow-xl">
+        <div className="mb-4 flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600/20 text-cyan-400">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <h2 className="text-sm font-bold text-white tracking-wide">
+            Vector Similarity Query &amp; Re-Verification
+          </h2>
         </div>
-        <div className="mt-3"><ErrorBox error={err} /></div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <label className="text-xs font-semibold text-slate-400">Query Source</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-cyan-500"
+              value={source}
+              onChange={(e) => setSource(e.target.value as any)}
+            >
+              <option value="current">Current Digital Twin State</option>
+              <option value="experience">Historical Experience Case</option>
+            </select>
+          </div>
+
+          {source === "experience" && (
+            <div>
+              <label className="text-xs font-semibold text-slate-400">Target Experience Case</label>
+              <select
+                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-cyan-500 font-mono"
+                value={expId}
+                onChange={(e) => setExpId(e.target.value)}
+              >
+                {rows.map((r: any) => (
+                  <option key={r.experience_id} value={r.experience_id}>
+                    {r.experience_id} &bull; {r.scenario_id}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs font-semibold text-slate-400">
+              Cosine Similarity Threshold ({thr.toFixed(2)})
+            </label>
+            <input
+              type="range"
+              min={0.5}
+              max={1.0}
+              step={0.01}
+              className="mt-2 w-full accent-cyan-400"
+              value={thr}
+              onChange={(e) => setThr(Number(e.target.value))}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-4">
+          <p className="text-[11px] text-slate-400">
+            Threshold: <b className="text-slate-300 font-mono">{num(exp.data?.config?.similarity_threshold, 2)}</b> &bull; Demand tolerance:{" "}
+            <b className="text-slate-300 font-mono">{pct(exp.data?.config?.demand_tolerance, 0)}</b>
+          </p>
+          <button
+            type="button"
+            onClick={search}
+            disabled={busy || (rows.length === 0 && source === "experience")}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-blue-500/25 transition hover:brightness-110 disabled:opacity-50"
+          >
+            {busy ? "Querying Vector Space..." : "Retrieve Matching Policies"}
+          </button>
+        </div>
+
+        <ErrorBox error={err} />
+
+        {/* Results Drawer */}
         {res && (
-          <div className="mt-3 space-y-2">
-            <div className="text-xs text-slate-500">Target junction {res.query.junction_id} · threshold {res.query.threshold}</div>
-            {res.matches.length === 0 ? <Empty title="No similar experiences found">The memory is empty or nothing is close enough.</Empty> : res.matches.map((m: any) => (
-              <div key={m.experience_id} className="rounded-lg border border-slate-200 p-3 text-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs">{m.experience_id}</span>
-                  <Badge tone={m.accepted ? "green" : "red"}>{m.accepted ? "accepted" : "rejected"}</Badge>
-                  <span>similarity <b>{m.similarity}</b></span><span className="text-xs text-slate-500">{m.scenario_id}</span>
+          <div className="mt-4 space-y-3 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-white">Retrieved Candidates ({res.matches?.length ?? 0})</span>
+              <span className="text-[11px] font-mono text-cyan-300">
+                Target Junction: {res.query?.junction_id}
+              </span>
+            </div>
+            {res.matches?.length === 0 ? (
+              <p className="text-xs text-slate-400">No stored policies matched within the similarity threshold.</p>
+            ) : (
+              res.matches?.map((m: any) => (
+                <div key={m.experience_id} className="rounded-xl border border-slate-800 bg-[#0c1322] p-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-bold text-cyan-400">{m.experience_id}</span>
+                    <span className="font-mono text-slate-400">Similarity: {num(m.similarity, 3)}</span>
+                  </div>
+                  <div className="mt-1 text-slate-300 font-medium">Policy: {m.intervention?.label}</div>
+                  <div className="mt-2 flex items-center gap-3 text-[11px]">
+                    <span className={m.accepted ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                      {m.accepted ? "Passed Similarity & Guardrails" : "Rejected by Compatibility Checks"}
+                    </span>
+                    <span className="text-slate-500">Stored Improvement: {pct(m.stored_improvement)}</span>
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-slate-700">Plan: {m.intervention.label} (stored improvement {pct(m.stored_improvement)})</div>
-                {m.reasons.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-red-700">{m.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}</ul>}
-                {m.accepted && <div className="mt-1 text-xs text-teal-800">Passed similarity and all compatibility checks → would be verified in SUMO before being recommended.</div>}
-              </div>))}
-            <p className="text-xs text-slate-500">{res.note}</p>
-          </div>)}
-      </Card>
-      <Card title="Stored experiences">
-        {exp.loading && !exp.data ? <Loading /> : <ErrorBox error={exp.error} />}
-        {exp.data && rows.length === 0 ? <Empty title="The memory is empty">Run “Find best intervention” on the Scenario page, or run the benchmark script, to create experiences.</Empty> : (
-          <div className="overflow-x-auto">
+              ))
+            )}
+            <p className="text-[11px] text-slate-500">{res.note}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Stored Experiences Catalog Table */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1322] p-5 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+            </svg>
+            <h2 className="text-sm font-bold text-white tracking-wide">Historical Case Catalog</h2>
+          </div>
+          <span className="font-mono text-xs text-slate-400">{rows.length} cases</span>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">
+            No experiences recorded yet. Run &ldquo;Find best intervention&rdquo; on the Scenario Studio to populate memory.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
             <table className="w-full text-xs">
-              <thead><tr className="text-left text-slate-500"><th>ID</th><th>Scenario</th><th>Junction</th><th>Plan</th><th>Improvement</th><th>Runs</th><th>Reuse ok/fail</th><th>Provenance</th></tr></thead>
-              <tbody>{rows.map((r: any) => (
-                <tr key={r.experience_id} className="border-t border-slate-100">
-                  <td className="py-1 font-mono">{r.experience_id}</td><td>{r.scenario_id}</td><td>{r.junction_id}</td><td>{r.intervention.label}</td>
-                  <td>{pct(r.improvement)} {r.improved ? <Badge tone="green">improved</Badge> : <Badge>no gain</Badge>}</td><td>{r.runs_used}</td>
-                  <td>{r.verified_count}/{r.failed_verification_count}</td><td>{r.provenance}</td></tr>))}</tbody>
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-900/80 text-left text-[11px] text-slate-400">
+                  <th className="p-2.5">ID</th>
+                  <th className="p-2.5">Scenario</th>
+                  <th className="p-2.5">Junction</th>
+                  <th className="p-2.5">Policy Plan</th>
+                  <th className="p-2.5">Improvement</th>
+                  <th className="p-2.5">Runs</th>
+                  <th className="p-2.5">Reuse Ok/Fail</th>
+                  <th className="p-2.5">Provenance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-mono">
+                {rows.map((r: any) => (
+                  <tr key={r.experience_id} className="hover:bg-slate-800/30">
+                    <td className="p-2.5 font-bold text-white">{r.experience_id}</td>
+                    <td className="p-2.5 text-slate-400">{r.scenario_id}</td>
+                    <td className="p-2.5 text-cyan-400">{r.junction_id}</td>
+                    <td className="p-2.5 font-sans font-medium text-slate-300">{r.intervention?.label}</td>
+                    <td className="p-2.5">
+                      <span className="font-bold text-emerald-400">{pct(r.improvement)}</span>{" "}
+                      {r.improved ? (
+                        <span className="text-[10px] text-emerald-400/80">&bull; improved</span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500">&bull; neutral</span>
+                      )}
+                    </td>
+                    <td className="p-2.5 text-slate-400">{r.runs_used}</td>
+                    <td className="p-2.5 text-slate-300">
+                      {r.verified_count} / {r.failed_verification_count}
+                    </td>
+                    <td className="p-2.5 text-slate-500 text-[10px]">{r.provenance}</td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
-          </div>)}
-        <p className="mt-2 text-xs text-slate-500">Threshold {num(exp.data?.config.similarity_threshold, 2)} · demand tolerance {pct(exp.data?.config.demand_tolerance, 0)} · feature schema {exp.data?.config.feature_schema}</p>
-      </Card>
+          </div>
+        )}
+      </div>
+
+      {/* Benchmark Panel Integration */}
       <BenchmarkPanel />
-    </>
+    </div>
   );
 }

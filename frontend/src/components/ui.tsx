@@ -6,7 +6,7 @@ export const LEVEL_LABEL: Record<Level, string> = { low: "Low", moderate: "Moder
 
 export function Card({ title, children, right, className = "" }: { title?: string; children: ReactNode; right?: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
+    <section className={`rounded-xl border border-slate-200 bg-white text-slate-800 p-4 shadow-sm ${className}`}>
       {(title || right) && (
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold tracking-wide text-slate-700">{title}</h2>

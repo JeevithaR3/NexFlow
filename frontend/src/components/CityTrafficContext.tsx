@@ -17,7 +17,7 @@ export default function CityTrafficContext() {
   }, [traffic.reload]);
 
   const status = traffic.data;
-  const readings = status?.sensors.flatMap((sensor) => sensor.latest ? [sensor.latest] : []) ?? [];
+  const readings = status?.sensors.flatMap((sensor) => (sensor.latest ? [sensor.latest] : [])) ?? [];
   const tone = !status?.configured ? "amber" : readings.length ? "green" : "slate";
   const label = traffic.loading && !status
     ? "Loading traffic status"
@@ -30,24 +30,50 @@ export default function CityTrafficContext() {
           : "Waiting for readings";
 
   return (
-    <section aria-label="Shared Bengaluru traffic context" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <strong className="text-slate-800">Bengaluru data context</strong>
+    <section
+      aria-label="Shared Bengaluru traffic context"
+      className="rounded-2xl border border-blue-500/20 bg-gradient-to-r from-[#0c1427] via-[#091122] to-[#080d1a] px-4 py-2.5 text-xs shadow-lg backdrop-blur-md"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+            <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span>Bengaluru Context:</span>
+          </div>
           <Badge tone={tone}>{label}</Badge>
-          <span className="text-slate-600">
+          <span className="text-slate-400">
             {readings.length
-              ? `Latest collection ${formatTime(status?.last_poll_at ?? null)}`
-              : "Live readings and the SUMO simulation are shown separately"}
+              ? `Latest update: ${formatTime(status?.last_poll_at ?? null)}`
+              : "Live readings & SUMO simulation run independently"}
           </span>
-          <span className="text-slate-500">Simulation and memory results remain SUMO-based.</span>
+          <span className="hidden text-slate-500 xl:inline">&bull; Simulation &amp; memory run on SUMO digital twin</span>
         </div>
-        <div className="flex gap-3">
-          <Link className="font-medium text-teal-800 underline" to="/map?source=bengaluru">Open live map</Link>
-          <Link className="font-medium text-teal-800 underline" to="/bengaluru">View history</Link>
+        <div className="flex items-center gap-3">
+          <Link
+            className="flex items-center gap-1 font-semibold text-cyan-400 transition hover:text-cyan-300 hover:underline"
+            to="/map?source=bengaluru"
+          >
+            <span>Live Map</span>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+          <Link
+            className="flex items-center gap-1 font-semibold text-cyan-400 transition hover:text-cyan-300 hover:underline"
+            to="/bengaluru"
+          >
+            <span>Corridor History</span>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
         </div>
       </div>
-      {traffic.error && <div role="status" className="mt-1 text-amber-800">Could not refresh the shared live-data status.</div>}
+      {traffic.error && (
+        <div role="status" className="mt-1 text-[11px] text-amber-400">
+          Could not refresh live data telemetry.
+        </div>
+      )}
     </section>
   );
 }
