@@ -14,8 +14,9 @@ from app.core.errors import (
     LiveTrafficUnavailableError,
     ModelNotTrainedError,
     NotFoundError,
+    SumoConfigError,
 )
-from app.digital_twin.congestion import COLORS, HIGH_MIN, LOW_MAX, distribution, level_of
+from app.digital_twin.congestion import COLORS, HIGH_MIN, LOW_MAX, congestion_index, distribution, level_of
 from app.experience_memory.compat import QueryContext
 from app.experience_memory.features import FEATURE_SCHEMA_VERSION, build_state_vector
 from app.interventions.candidates import reroute_candidates, signal_candidates
@@ -24,8 +25,9 @@ from app.interventions.objective import OBJECTIVE_VERSION, evaluate_candidate
 from app.interventions.routing import propose_route
 from app.ml.dataset import load_dataset
 from app.models.db import BenchmarkRow
-from app.schemas.api import BenchmarkRunIn, EvaluateIn, PredictionRunIn, SimulationRunIn
+from app.schemas.api import BenchmarkRunIn, BengaluruSumoRunIn, EvaluateIn, PredictionRunIn, SimulationRunIn
 from app.services.container import AppState
+from app.services.bengaluru_sumo import match_live_speeds, rank_routes_with_sumo_forecast
 from app.sumo.collector import F_HALT, F_SPEED
 from app.sumo.environment import check_sumo, require_sumo
 from app.sumo.scenario import ScenarioConfig
@@ -148,9 +150,134 @@ def poll_bengaluru_traffic(s: AppState = Depends(state)):
 def bengaluru_live_routes(
     origin_id: str = Query(..., min_length=1, max_length=40),
     destination_id: str = Query(..., min_length=1, max_length=40),
+    simulation_run_id: str | None = Query(None, min_length=12, max_length=12),
     s: AppState = Depends(state),
 ):
-    return s.traffic.route_options(origin_id, destination_id)
+    if simulation_run_id is None:
+        return s.traffic.route_options(origin_id, destination_id)
+    run = s.jobs.get(simulation_run_id)
+    if run is None:
+        raise NotFoundError(f"SUMO/GNN run '{simulation_run_id}' was not found.")
+    if run["kind"] != "bengaluru_sumo" or run["status"] != "succeeded" or not run["result"]:
+        raise ConflictError("Choose a completed Bengaluru SUMO/GNN run to rank routes.")
+    if s.bengaluru_net is None:
+        raise SumoConfigError(
+            "The Bengaluru OSM SUMO network is not loaded.",
+            hint="Run `python scripts/setup_bengaluru_sumo.py` and restart the backend.",
+        )
+    if run["result"].get("network_id") != s.bengaluru_net.net_hash:
+        raise ConflictError("This SUMO/GNN run used a different OSM network; run a new simulation before ranking routes.")
+    routes = s.traffic.route_options(origin_id, destination_id)
+    return rank_routes_with_sumo_forecast(
+        routes,
+        s.bengaluru_net,
+        run["result"]["edges"],
+        simulation_run_id=simulation_run_id,
+        horizon_s=run["result"]["horizon_s"],
+    )
+
+
+@router.get("/traffic/bengaluru/sumo/network")
+def bengaluru_sumo_network(s: AppState = Depends(state)):
+    net = s.bengaluru_net
+    if net is None:
+        raise SumoConfigError(
+            "The Bengaluru OSM SUMO network is not installed.",
+            hint="Run `python scripts/setup_bengaluru_sumo.py` and restart the backend.",
+        )
+    sensors = s.traffic.snapshot()["sensors"]
+    center_lat = sum(sensor["latitude"] for sensor in sensors) / len(sensors)
+    center_lon = sum(sensor["longitude"] for sensor in sensors) / len(sensors)
+    return {
+        "network_id": net.net_hash,
+        "synthetic": False,
+        "notice": "OpenStreetMap roads around the five TomTom locations. The areas are separate; SUMO traffic between them is not connected.",
+        "origin": {"lat": center_lat, "lon": center_lon},
+        "congestion": {"low_max": LOW_MAX, "high_min": HIGH_MIN, "colors": COLORS},
+        "edges": [
+            {"id": edge.id, "from": edge.from_node, "to": edge.to_node, "length_m": edge.length,
+             "speed_ms": edge.speed, "lanes": edge.lanes,
+             "shape": net.edge_latlon_shape(edge.id, center_lat, center_lon)}
+            for edge in net.edges
+        ],
+        "junctions": [
+            {"id": junction.id, "lat": junction.latitude, "lon": junction.longitude, "type": junction.type,
+             "has_tls": junction.has_tls, "neighbors": net.neighbors(junction.id),
+             "tls": net.tls_summary(junction.id) if junction.has_tls and junction.id in net.tls_programs else None}
+            for junction in net.junctions
+        ],
+        "signal_limits": s.limits.to_dict(),
+        "model": {
+            "loaded": s.bengaluru_forecaster is not None,
+            "error": s.bengaluru_forecaster_error.message if s.bengaluru_forecaster_error else None,
+        },
+    }
+
+
+@router.post("/traffic/bengaluru/sumo/run", status_code=202)
+def run_bengaluru_sumo(body: BengaluruSumoRunIn, s: AppState = Depends(state)):
+    if s.bengaluru_net is None or s.bengaluru_runner is None:
+        raise SumoConfigError(
+            s.bengaluru_net_error.message if s.bengaluru_net_error else "The Bengaluru OSM SUMO network is not installed.",
+            hint="Run `python scripts/setup_bengaluru_sumo.py` and restart the backend.",
+        )
+    fc = s.bengaluru_forecaster
+    if fc is None:
+        raise ModelNotTrainedError(
+            "The Bengaluru OSM GNN has not been trained.",
+            hint="Run scripts/generate_bengaluru_dataset.py, then scripts/train_bengaluru_gnn.py.",
+        )
+    scenario = _sc(s, body.scenario)
+    if scenario.duration_s < (fc.window + fc.horizon) * fc.interval_s:
+        raise DataValidationError("Scenario duration is too short for the Bengaluru GNN observation window.")
+
+    def job(ctx):
+        require_sumo()
+        speed_limits, matches = match_live_speeds(s.bengaluru_net, s.traffic.snapshot())
+        result = s.bengaluru_runner.run(
+            scenario,
+            collect_observations=True,
+            interval_s=fc.interval_s,
+            edge_speed_limits=speed_limits,
+            stop_event=ctx.stop_event,
+            progress=lambda fraction: ctx.progress(fraction * 0.8, "SUMO using live TomTom speed constraints"),
+        )
+        if result.observations.shape[0] < fc.window:
+            raise DataValidationError("SUMO returned too few observation intervals for the Bengaluru GNN.")
+        observed_window = result.observations[-fc.window:]
+        predicted_ci = fc.predict(observed_window)
+        current_ci = congestion_index(
+            observed_window[-1, :, F_SPEED],
+            np.array([edge.speed for edge in s.bengaluru_net.edges]),
+        )
+        ctx.progress(0.9, "Preparing Bengaluru road forecast")
+        return {
+            "source": "bengaluru_osm_sumo_gnn",
+            "network_id": s.bengaluru_net.net_hash,
+            "map_is_openstreetmap": True,
+            "traffic_is_simulated": True,
+            "tomtom_speed_constraints_applied": matches,
+            "model_version": fc.version,
+            "horizon_s": fc.horizon * fc.interval_s,
+            "scenario": scenario.to_dict(),
+            "simulation": result.summary(),
+            "edges": [
+                {"id": edge.id, "ci": round(float(current_ci[index]), 4),
+                 "level": level_of(float(current_ci[index])),
+                 "pred_ci": round(float(predicted_ci[index]), 4),
+                 "pred_level": level_of(float(predicted_ci[index])),
+                 "shape": s.bengaluru_net.edge_latlon_shape(edge.id, 0, 0)}
+                for index, edge in enumerate(s.bengaluru_net.edges)
+            ],
+            "notice": (
+                "Current TomTom speeds were applied as speed caps to the nearest matching OSM road edges. "
+                "SUMO generated the vehicles and simulated traffic; the Bengaluru GNN was trained on SUMO "
+                "simulations for this OSM graph. Road data © OpenStreetMap contributors (ODbL). "
+                "This is not a replay of real vehicle counts or live signal control."
+            ),
+        }
+
+    return _accepted(s.jobs.submit("bengaluru_sumo", {"scenario": scenario.to_dict()}, job))
 
 
 # ---- runs ----------------------------------------------------------------------------------

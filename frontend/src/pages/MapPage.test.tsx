@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import MapPage from "./MapPage";
 
 afterEach(() => vi.restoreAllMocks());
@@ -78,7 +78,7 @@ describe("Traffic map data sources", () => {
         latest: null,
       }],
     });
-    vi.spyOn(api, "bengaluruRoutes").mockResolvedValue({
+    const liveRoutes = vi.spyOn(api, "bengaluruRoutes").mockResolvedValue({
       provider: "TomTom Routing API",
       source: "live_traffic_routing",
       traffic_aware: true,
@@ -109,15 +109,35 @@ describe("Traffic map data sources", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText(/bounded trend estimate/)).toBeTruthy();
+    expect(await screen.findByText(/TomTom trend uses recent readings/)).toBeTruthy();
     expect(screen.getByText("18.0 km/h")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "NexFlow forecast" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "TomTom trend" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText(/22.0 km\/h · moderate/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Current TomTom" }));
     expect(screen.getByRole("button", { name: "Current TomTom" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Find live routes" }));
     expect(await screen.findByText("Recommended · Fastest with current traffic")).toBeTruthy();
     expect(screen.getByText(/7.2 km · 18 min predicted/)).toBeTruthy();
+    vi.spyOn(api, "runBengaluruSumo").mockRejectedValue(
+      new ApiError("The Bengaluru OSM SUMO network is not installed.", "sumo_config_invalid"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run TomTom-calibrated simulation" }));
+    expect(await screen.findByText("The Bengaluru OSM SUMO network is not installed.")).toBeTruthy();
+    vi.spyOn(api, "runBengaluruSumo").mockResolvedValue({ run_id: "run-12345678" });
+    vi.spyOn(api, "run").mockResolvedValue({
+      id: "run-12345678",
+      kind: "bengaluru_sumo",
+      status: "succeeded",
+      progress: 1,
+      message: "done",
+      result: null,
+      error: null,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run TomTom-calibrated simulation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "GNN forecast" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rank routes with GNN forecast" }));
+    expect(await screen.findByText("Recommended · Fastest with current traffic")).toBeTruthy();
+    expect(liveRoutes).toHaveBeenLastCalledWith("mg-road", "silk-board", "run-12345678");
     fireEvent.click(screen.getByRole("button", { name: "SUMO simulation" }));
     expect(await screen.findByText(/Road colours, forecasts and routes below use SUMO data/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Predicted" })).toBeTruthy();

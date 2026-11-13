@@ -26,6 +26,7 @@ class EdgeInfo:
     speed: float  # free-flow speed, m/s
     lanes: int
     shape: tuple[tuple[float, float], ...]  # SUMO x/y metres
+    shape_latlon: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ class JunctionInfo:
     has_tls: bool
     incoming: tuple[str, ...]
     outgoing: tuple[str, ...]
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,8 @@ class NetworkModel:
         """Edge polyline in lat/lon, shifted ``offset_m`` to the right so that the two
         directions of a road are drawn side by side."""
         e = self.edge_by_id[edge_id]
+        if e.shape_latlon:
+            return [[round(lat, 7), round(lon, 7)] for lat, lon in e.shape_latlon]
         pts = list(e.shape)
         out: list[list[float]] = []
         for i, (x, y) in enumerate(pts):
@@ -159,11 +164,27 @@ def load_network(path: Path | str) -> NetworkModel:
     except Exception as exc:
         raise SumoConfigError(f"Could not parse SUMO network '{path.name}': {type(exc).__name__}") from exc
 
+    geographic = net.hasGeoProj()
+    if geographic:
+        try:
+            net.getGeoProj()
+        except RuntimeError as exc:
+            raise SumoConfigError(
+                "The OpenStreetMap SUMO network needs pyproj for geographic coordinates.",
+                hint="Install backend requirements, including pyproj, then reload the network.",
+            ) from exc
+
     edges: list[EdgeInfo] = []
     for e in sorted(net.getEdges(), key=lambda x: x.getID()):
         if e.getFunction() not in ("", "normal"):
             continue
         shape = tuple((float(x), float(y)) for x, y in e.getRawShape())
+        shape_latlon = ()
+        if geographic:
+            shape_latlon = tuple(
+                (float(lat), float(lon))
+                for lon, lat in (net.convertXY2LonLat(x, y) for x, y in shape)
+            )
         edges.append(
             EdgeInfo(
                 id=e.getID(),
@@ -173,6 +194,7 @@ def load_network(path: Path | str) -> NetworkModel:
                 speed=float(e.getSpeed()),
                 lanes=int(e.getLaneNumber()),
                 shape=shape,
+                shape_latlon=shape_latlon,
             )
         )
     if not edges:
@@ -184,8 +206,13 @@ def load_network(path: Path | str) -> NetworkModel:
         inc = tuple(sorted(e.getID() for e in n.getIncoming() if e.getID() in edge_by_id))
         out = tuple(sorted(e.getID() for e in n.getOutgoing() if e.getID() in edge_by_id))
         x, y = n.getCoord()
+        longitude, latitude = net.convertXY2LonLat(x, y) if geographic else (None, None)
         junctions.append(
-            JunctionInfo(n.getID(), float(x), float(y), n.getType(), n.getType() == "traffic_light", inc, out)
+            JunctionInfo(
+                n.getID(), float(x), float(y), n.getType(), n.getType() == "traffic_light", inc, out,
+                float(latitude) if latitude is not None else None,
+                float(longitude) if longitude is not None else None,
+            )
         )
 
     tls_programs: dict[str, list[dict]] = {}

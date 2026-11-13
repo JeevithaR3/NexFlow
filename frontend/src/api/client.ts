@@ -16,6 +16,7 @@ export class ApiError extends Error {
 
 /** Turns any axios failure into an ApiError with a message that is safe to show users. */
 export function toApiError(err: unknown): ApiError {
+  if (err instanceof ApiError) return err;
   const e = err as AxiosError<{ error?: { code: string; message: string; hint?: string; details?: ApiError["details"] } }>;
   const body = e.response?.data?.error;
   if (body) return new ApiError(body.message, body.code, e.response?.status, body.hint, body.details);
@@ -100,6 +101,35 @@ export interface LiveTrafficPredictions {
   sensors: LiveTrafficPrediction[];
 }
 
+export interface BengaluruSumoResult {
+  source: "bengaluru_osm_sumo_gnn";
+  network_id: string;
+  map_is_openstreetmap: boolean;
+  traffic_is_simulated: boolean;
+  tomtom_speed_constraints_applied: {
+    sensor_id: string;
+    road_name: string;
+    edge_id: string;
+    distance_m: number;
+    observed_speed_kph: number;
+    applied_speed_kph: number;
+    observed_at: string;
+  }[];
+  model_version: string;
+  horizon_s: number;
+  scenario: ScenarioIn;
+  simulation: Record<string, unknown>;
+  edges: {
+    id: string;
+    ci: number;
+    level: Level;
+    pred_ci: number;
+    pred_level: Level;
+    shape: [number, number][];
+  }[];
+  notice: string;
+}
+
 export interface LiveRouteOption {
   rank: number;
   label: string;
@@ -113,13 +143,19 @@ export interface LiveRouteOption {
   forecast_sensor_count: number;
   recommendation_rank: number | null;
   recommended: boolean;
+  simulation_forecast_edge_ids?: string[];
+  simulation_forecast_edge_count?: number;
+  simulation_forecast_coverage_pct?: number;
+  simulation_forecast_adjustment_s?: number;
 }
 
 export interface LiveTrafficRoutes {
   provider: string;
   source: "live_traffic_routing";
   traffic_aware: boolean;
-  forecast_source: "tomtom_history_trend" | null;
+  forecast_source: "tomtom_history_trend" | "bengaluru_sumo_gnn" | null;
+  simulation_run_id?: string;
+  forecast_horizon_s?: number;
   origin: { id: string; road_name: string; latitude: number; longitude: number };
   destination: { id: string; road_name: string; latitude: number; longitude: number };
   requested_at: string;
@@ -137,10 +173,12 @@ export const api = {
   trafficPredictions: () => get("/api/v1/traffic/predictions"),
   bengaluruTraffic: () => get<LiveTrafficStatus>("/api/v1/traffic/bengaluru"),
   bengaluruPredictions: () => get<LiveTrafficPredictions>("/api/v1/traffic/bengaluru/predictions"),
+  runBengaluruSumo: (scenario: ScenarioIn) =>
+    post<{ run_id: string }>("/api/v1/traffic/bengaluru/sumo/run", { scenario }),
   bengaluruTrafficHistory: (limit = 1000) => get<{ readings: LiveTrafficReading[] }>("/api/v1/traffic/bengaluru/history", { limit }),
   pollBengaluruTraffic: () => post<{ status: string; observed_at: string; saved_readings: number; failures: { sensor_id: string; message: string }[] }>("/api/v1/traffic/bengaluru/poll"),
-  bengaluruRoutes: (origin_id: string, destination_id: string) =>
-    get<LiveTrafficRoutes>("/api/v1/traffic/bengaluru/routes", { origin_id, destination_id }),
+  bengaluruRoutes: (origin_id: string, destination_id: string, simulation_run_id?: string) =>
+    get<LiveTrafficRoutes>("/api/v1/traffic/bengaluru/routes", { origin_id, destination_id, simulation_run_id }),
   runPrediction: (scenario: ScenarioIn, mode: "sumo" | "dataset_replay") => post<{ run_id: string }>("/api/v1/predictions/run", { scenario, mode }),
   runSimulation: (scenario: ScenarioIn, intervention: object | null) => post<{ run_id: string }>("/api/v1/simulations/run", { scenario, intervention }),
   evaluate: (body: object) => post<{ run_id: string }>("/api/v1/interventions/evaluate", body),

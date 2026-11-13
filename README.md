@@ -1,7 +1,7 @@
 # NexFlow: traffic prediction and digital twin (academic prototype)
 
 GNN forecasting of congestion → Digital Twin state → Experience Memory (FAISS) → SUMO/TraCI verification and search of signal-timing plans → React dashboard.
-The dashboard combines two clearly-labelled sources: TomTom live traffic speeds at five Bengaluru road points, and the synthetic SUMO dataset used for GNN forecasts and intervention experiments. The shared city readings appear across the tabs and in the Traffic map, but are not fed into the synthetic GNN or SUMO model. Recommendations are simulated only and never touch real signals.
+The dashboard distinguishes the original synthetic-grid GNN/SUMO demo from TomTom observations at five Bengaluru road points. A separate Bengaluru workflow applies fresh TomTom speeds as caps on nearby OpenStreetMap SUMO roads, simulates traffic, then forecasts that simulated state with the shared GNN architecture trained specifically for that OSM network. The GNN is trained on SUMO-generated data, not TomTom history; these are five disconnected local road areas, not a citywide connected simulation. Recommendations are simulated only and never touch real signals.
 The Experience-Memory idea is our *proposed efficiency improvement*; it is not claimed to be novel, and its benefit is only what `scripts/run_benchmark.py` measures.
 
 ## Status (what is implemented and verified)
@@ -14,8 +14,9 @@ The Experience-Memory idea is our *proposed efficiency improvement*; it is not c
 | Decision engine + A-vs-B benchmark | implemented; benchmark run once (results below) |
 | FastAPI (`/api/v1`) | implemented, tested over HTTP with real SUMO |
 | TomTom Bengaluru corridor collector | optional; polls five road points and retains 30 days locally when an API key is configured |
+| Bengaluru OSM + TomTom + SUMO/GNN | implemented and smoke-tested end-to-end; separate setup, SUMO dataset generation, and network-specific GNN training scripts |
 | React frontend (6 pages) | shared Bengaluru status appears on every page; Traffic map switches between live TomTom points and the clearly-labelled SUMO simulation |
-| Tests | backend 42 pass (pytest); frontend 7 pass (vitest); type-check and build pass |
+| Tests | focused live-traffic backend tests 11 pass; frontend 7 pass; type-check/build pass. Full backend suite: 47 pass, 2 fail because the bundled synthetic GNN checkpoint hash does not match the synthetic network file |
 | Limits | one benchmark run on one machine; no CI; no browser-compat testing beyond headless Chromium; OSM tiles need internet |
 
 ### Measured results (synthetic data, one machine; indicative only)
@@ -50,7 +51,18 @@ The shared traffic context is visible throughout the dashboard. **Traffic map** 
 
 On the Bengaluru map, **NexFlow forecast** plots a 15-minute speed estimate on each monitored road segment with sufficient readings. This MVP fits a bounded linear trend to up to six recent TomTom speed/free-flow ratios; it requires at least three readings spanning two poll intervals, with the newest no older than two poll intervals. Route alternatives are ranked by TomTom's current ETA adjusted for the forecasted travel-time change on monitored segment geometries that overlap each route. Parts of the route without a monitored match retain TomTom's current ETA. The UI reports the matching segment coverage.
 
-This is a small real-road forecasting baseline, not the existing GNN, not a full-trip forecast, and not a signal-control action. The existing GNN, SUMO scenarios, intervention memory and benchmarks still use the synthetic grid. Five fixed TomTom sample points do not provide citywide coverage or establish model accuracy; the UI labels both sources explicitly.
+This is a small real-road forecasting baseline, not the GNN/SUMO simulation or a signal-control action. The original GNN, SUMO scenarios, intervention memory and benchmarks still use the synthetic grid. Five fixed TomTom sample points do not provide citywide coverage or establish model accuracy; the UI labels both sources explicitly.
+
+### TomTom-conditioned Bengaluru SUMO + GNN
+This optional path uses real OSM geometry around each of the five TomTom sensor coordinates (road data © OpenStreetMap contributors, ODbL). It does **not** connect the five areas to one another: they are separate local road networks. TomTom provides current speeds only; each fresh observation is matched to its nearest OSM road (within 150 m) and applied to that SUMO edge as a speed cap. SUMO still generates the vehicles and traffic; it does not receive TomTom vehicle counts, queues, or signal phases. The GNN uses the same GCN-GRU architecture as the synthetic demo, but its checkpoint is trained specifically on SUMO-generated observations for this OSM graph. It forecasts the simulated state (270 seconds ahead with the default settings), not observed real-world traffic.
+
+Generate and train the separate network-specific model (requires internet access for OSM downloads and a working SUMO installation):
+```
+python scripts/setup_bengaluru_sumo.py
+python scripts/generate_bengaluru_dataset.py --runs 60
+python scripts/train_bengaluru_gnn.py --epochs 200
+```
+Restart the backend after setup/training. In **Traffic map → Bengaluru live**, click **Run TomTom-calibrated simulation**. The resulting colors overlay the local OSM SUMO roads; switch between its simulated current state and GNN forecast using the map layer selector. Then choose an origin/destination and click **Rank routes with GNN forecast**: TomTom supplies route options and current ETAs, while NexFlow re-ranks them using the forecasted-vs-current SUMO congestion change on OSM road segments matched to each route. Unmatched portions keep TomTom's ETA; the UI reports the matching coverage. This is a decision-support estimate, not a fully simulated trip, a citywide prediction, or live control. The run requires a configured TomTom key, fresh readings that match OSM edges, the generated network, and its separately trained checkpoint. The original synthetic-grid model and scenarios remain unchanged.
 
 ## Run
 ```
@@ -60,7 +72,7 @@ python scripts/train_gnn.py                     # trains and prints MAE/RMSE vs 
 cd backend ; uvicorn app.main:app --port 8000   # API docs at http://localhost:8000/docs
 cd frontend ; npm run dev                       # dashboard at http://localhost:5173
 ```
-Demo flow: open **Traffic map → Bengaluru live** and explain that the dashed colored road segments show NexFlow's 15-minute trend forecast from collected TomTom history (allow at least three samples over two poll intervals). Request MG Road → Silk Board routes; NexFlow ranks alternatives using forecasts only on matching monitored segments, while TomTom supplies route geometry and current-traffic ETAs. Switch to **SUMO simulation** to compare the separate synthetic GNN/SUMO prototype. Finally run **Scenario simulation → Find best intervention** (a SUMO-only simulation that creates the first stored experience).
+Demo flow: open **Traffic map → Bengaluru live** and explain that the dashed sensor segments show a 15-minute trend from TomTom history (allow at least three samples over two poll intervals). Click **Run TomTom-calibrated simulation** to overlay the five local OSM areas using current TomTom speeds as SUMO edge caps and show the OSM-trained GNN forecast. Then request MG Road → Silk Board routes with **Rank routes with GNN forecast**; TomTom supplies real route options and current ETAs, and NexFlow adjusts/ranks them using the simulation's predicted-vs-current congestion on matching OSM road segments. Explain that vehicle traffic remains simulated, unmatched trip sections keep TomTom's ETA, and the five areas do not connect. Switch to **SUMO simulation** for the original synthetic-grid model. Finally run **Scenario simulation → Find best intervention** (a SUMO-only simulation that creates the first stored experience).
 Populate/measure memory: `python scripts/run_benchmark.py --warmup 8 --eval 12` (≈15–20 min), or use the Benchmark panel.
 
 ## Tests
@@ -102,7 +114,7 @@ Say: “SUMO simulates 9 minutes of traffic, the GNN predicts every road’s con
 3. Live and simulated maps (2 min, Traffic map).
 
 Choose “Bengaluru live,” request the MG Road → Silk Board trip and show the actual route geometry and TomTom's traffic-aware ETA/alternatives. Explain this is a five-location sample. Switch to “SUMO simulation” to show the generated grid and its current/predicted congestion.
-Say explicitly: “TomTom computes these live routes. NexFlow's GNN forecast and intervention experiments still run on synthetic SUMO data; connecting the model to enough real road history is future work.”
+Say explicitly: “TomTom computes these live routes. The original GNN and interventions still use the synthetic grid. The optional Bengaluru run uses TomTom speeds to constrain SUMO on five separate real OSM areas, then applies a GNN trained on simulated traffic for that road graph.”
 
 4. Intervention test (2 min, Scenario simulation).
 
@@ -118,11 +130,11 @@ The second time you click it, the memory may be consulted. Open the Experience m
 6. Results honesty slide (1 min, Memory page benchmark panel). Say: “We measured it. Memory saved 6.5% of runs. It was reused in 1 of 12 cases, and two retrieved plans failed verification. The benefit is real but small here.”
 
 What to say about the results
-GNN: it beats persistence (MAE 0.144 vs 0.206) but is level with a simple per-road median baseline. It is trained on synthetic data only, so say nothing about real-world accuracy.
+Original synthetic-grid GNN: it beats persistence (MAE 0.144 vs 0.206) but is level with a simple per-road median baseline. That result does not establish accuracy on real Bengaluru traffic or the separate OSM model.
 Memory: memory is our proposed efficiency idea, not a novel invention. The benchmark gives a modest benefit, and filling the memory costs about 72 runs, which would take about 123 decisions to recover.
 Safety: all recommendations are simulated. Nothing controls a real signal.
 Likely questions
 “Why not just trust the retrieved plan?” Similarity doesn’t prove a plan works. Every retrieved plan passes compatibility checks and is then verified in SUMO.
 “Is this a digital twin?” The project shares live Bengaluru context across the dashboard and displays it on the map. Its intervention-testing twin is still the separate synthetic SUMO network.
-“Does the model use live Bengaluru traffic?” No. The TomTom collector builds a separate local history; the forecast model remains trained and evaluated on synthetic SUMO data.
+“Does the Bengaluru GNN learn from TomTom?” No. Fresh TomTom speeds constrain matching OSM SUMO edges at run time, but the network-specific GNN is trained on simulated SUMO observations. It predicts simulated traffic, not measured traffic.
 “Why is the GNN no better than the median?” The per-interval congestion target is noisy. Name this as the main limitation.

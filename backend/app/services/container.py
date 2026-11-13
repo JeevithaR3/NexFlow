@@ -38,6 +38,11 @@ class AppState:
         self.twin: DigitalTwin | None = None
         self.memory: ExperienceMemory | None = None
         self.runner: SumoRunner | None = None
+        self.bengaluru_net: NetworkModel | None = None
+        self.bengaluru_net_error: NexFlowError | None = None
+        self.bengaluru_runner: SumoRunner | None = None
+        self.bengaluru_forecaster: ForecastService | None = None
+        self.bengaluru_forecaster_error: NexFlowError | None = None
         self._fc: ForecastService | None = None
         self._fc_mtime = -1.0
         self.fc_error: NexFlowError | None = None
@@ -49,6 +54,21 @@ class AppState:
             self.runner = SumoRunner(self.net, self.s, self.limits)
         except SumoConfigError as e:
             self.net_error = e
+        try:
+            if self.s.bengaluru_network_file.exists():
+                self.bengaluru_net = load_network(self.s.bengaluru_network_file)
+                self.bengaluru_runner = SumoRunner(
+                    self.bengaluru_net, self.s, self.limits, sumocfg_file=self.s.bengaluru_sumocfg_file
+                )
+        except NexFlowError as e:
+            self.bengaluru_net_error = e
+        if self.bengaluru_net and self.s.bengaluru_checkpoint_file.exists():
+            try:
+                self.bengaluru_forecaster = ForecastService.load(
+                    self.s.bengaluru_checkpoint_file, self.bengaluru_net
+                )
+            except NexFlowError as e:
+                self.bengaluru_forecaster_error = e
 
     def require_net(self) -> NetworkModel:
         if self.net is None:

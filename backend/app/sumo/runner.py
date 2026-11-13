@@ -20,7 +20,7 @@ from typing import Callable
 import numpy as np
 
 from app.core.config import Settings, get_settings
-from app.core.errors import SimulationCancelled, SimulationError, TwinSyncError
+from app.core.errors import DataValidationError, SimulationCancelled, SimulationError, TwinSyncError
 from app.core.logging import get_logger
 from app.digital_twin.network import NetworkModel
 from app.interventions.models import REROUTE, SIGNAL, Intervention, SignalLimits, validate_intervention
@@ -74,10 +74,18 @@ class RunResult:
 
 
 class SumoRunner:
-    def __init__(self, net: NetworkModel, settings: Settings | None = None, limits: SignalLimits | None = None):
+    def __init__(
+        self,
+        net: NetworkModel,
+        settings: Settings | None = None,
+        limits: SignalLimits | None = None,
+        *,
+        sumocfg_file: Path | None = None,
+    ):
         self.net = net
         self.s = settings or get_settings()
         self.limits = limits or SignalLimits()
+        self.sumocfg_file = sumocfg_file or self.s.sumocfg_file
 
     # ---- public API -----------------------------------------------------------------
     def run(
@@ -94,6 +102,7 @@ class SumoRunner:
         max_wall_s: float = 900.0,
         run_id: str | None = None,
         gui: bool | None = None,
+        edge_speed_limits: dict[str, float] | None = None,
     ) -> RunResult:
         """Run one scenario to completion.
 
@@ -106,6 +115,10 @@ class SumoRunner:
         self._check_config_once()
         if intervention is not None:
             validate_intervention(self.net, intervention, self.limits)
+        edge_speed_limits = edge_speed_limits or {}
+        for edge_id, speed_ms in edge_speed_limits.items():
+            if edge_id not in self.net.edge_by_id or not np.isfinite(speed_ms) or speed_ms <= 0:
+                raise DataValidationError("A live traffic speed limit refers to an invalid road or speed.")
         run_id = run_id or uuid.uuid4().hex[:10]
         use_gui = self.s.sumo_gui if gui is None else gui
         binary = status.sumo_gui_binary if use_gui and status.sumo_gui_binary else status.sumo_binary
@@ -121,7 +134,7 @@ class SumoRunner:
         write_route_file(self.net, scenario, route_file)
         interval = interval_s or self.s.interval_s
         cmd = [
-            binary, "-c", str(self.s.sumocfg_file), "-r", str(route_file),
+            binary, "-c", str(self.sumocfg_file), "-r", str(route_file),
             "--seed", str(scenario.seed), "--begin", "0", "--end", str(scenario.duration_s),
             "--step-length", str(scenario.step_length_s), "--no-step-log", "true", "--no-warnings", "true",
             "--duration-log.disable", "true", "--waiting-time-memory", "3600",
@@ -152,6 +165,8 @@ class SumoRunner:
                         hint="Check the SUMO installation and the simulation configuration.",
                     ) from exc
             self._verify_ids(conn)
+            for edge_id, speed_ms in edge_speed_limits.items():
+                conn.edge.setMaxSpeed(edge_id, float(speed_ms))
             self._subscribe(conn)
             reroute_vehicles = REROUTE == (intervention.type if intervention else None)
             next_reroute = activate_at_s
@@ -215,7 +230,7 @@ class SumoRunner:
 
     # ---- helpers -----------------------------------------------------------------
     def _check_config_once(self) -> None:
-        cfg = self.s.sumocfg_file
+        cfg = self.sumocfg_file
         key = str(cfg)
         mtime = cfg.stat().st_mtime if cfg.exists() else -1
         if _CFG_OK.get(key) != mtime:

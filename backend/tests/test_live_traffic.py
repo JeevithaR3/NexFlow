@@ -1,12 +1,16 @@
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from datetime import datetime, timedelta, timezone
 
 from app.core.config import get_settings
 from app.core.errors import DataValidationError, LiveTrafficUnavailableError
+from app.digital_twin.network import EdgeInfo, NetworkModel
 from app.main import create_app
 from app.models.db import Database, LiveTrafficReadingRow
+from app.services.bengaluru_sumo import match_live_speeds, rank_routes_with_sumo_forecast
 from app.services.tomtom_traffic import SENSORS, TomTomTrafficCollector
 
 
@@ -262,3 +266,148 @@ def test_live_traffic_routes_are_explicit_when_provider_is_not_configured(tmp_pa
         route = client.get("/api/v1/traffic/bengaluru/routes", params={"origin_id": "mg-road", "destination_id": "silk-board"})
         assert route.status_code == 503
         assert route.json()["error"]["code"] == "live_traffic_unavailable"
+
+
+def test_tomtom_speed_match_uses_nearest_osm_edge_and_handles_stopped_traffic():
+    edge = EdgeInfo(
+        "osm-road",
+        "from",
+        "to",
+        100,
+        13.89,
+        1,
+        ((0, 0), (1, 0)),
+        ((12.9757, 77.6055), (12.9758, 77.6056)),
+    )
+    network = NetworkModel(Path("bengaluru.net.xml"), [edge], [], {}, {}, [], "net", "tls")
+    snapshot = {
+        "poll_interval_s": 300,
+        "sensors": [{
+            "id": "mg-road",
+            "road_name": "Mahatma Gandhi Road",
+            "latitude": 12.9757,
+            "longitude": 77.6055,
+            "latest": {
+                "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "current_speed_kph": 0,
+            },
+        }],
+    }
+
+    speed_limits, matches = match_live_speeds(network, snapshot)
+
+    assert speed_limits == {"osm-road": 0.1}
+    assert matches[0]["edge_id"] == "osm-road"
+    assert matches[0]["applied_speed_kph"] == 0.4
+
+
+def test_sumo_gnn_forecast_reorders_routes_using_matched_osm_road_predictions():
+    edges = [
+        EdgeInfo(
+            "congested-road", "a", "b", 100, 13.89, 1, ((0, 0), (1, 0)),
+            ((12.9757, 77.6055), (12.9757, 77.6065)),
+        ),
+        EdgeInfo(
+            "clear-road", "c", "d", 100, 13.89, 1, ((0, 0), (1, 0)),
+            ((12.978, 77.6055), (12.978, 77.6065)),
+        ),
+    ]
+    network = NetworkModel(Path("bengaluru.net.xml"), edges, [], {}, {}, [], "net", "tls")
+    response = {
+        "routes": [
+            {"rank": 1, "travel_time_s": 600, "geometry": [[12.9757, 77.6055], [12.9757, 77.6065]]},
+            {"rank": 2, "travel_time_s": 650, "geometry": [[12.978, 77.6055], [12.978, 77.6065]]},
+        ],
+    }
+
+    ranked = rank_routes_with_sumo_forecast(
+        response,
+        network,
+        [
+            {"id": "congested-road", "ci": 0.1, "pred_ci": 0.9},
+            {"id": "clear-road", "ci": 0.1, "pred_ci": 0.1},
+        ],
+        simulation_run_id="run-123456789",
+        horizon_s=270,
+    )
+
+    assert ranked["forecast_source"] == "bengaluru_sumo_gnn"
+    assert ranked["simulation_run_id"] == "run-123456789"
+    assert ranked["routes"][0]["travel_time_s"] == 650
+    assert ranked["routes"][0]["recommended"] is True
+    assert ranked["routes"][0]["simulation_forecast_edge_ids"] == ["clear-road"]
+    assert ranked["routes"][0]["simulation_forecast_coverage_pct"] == 100
+    assert ranked["routes"][1]["simulation_forecast_adjustment_s"] > 0
+
+
+def test_bengaluru_sumo_api_explains_setup_requirements_when_network_is_missing(tmp_path):
+    settings = get_settings().model_copy(
+        update={
+            "data_dir": tmp_path,
+            "database_url": f"sqlite:///{(tmp_path / 'api.db').as_posix()}",
+            "tomtom_api_key": None,
+        }
+    )
+    with TestClient(create_app(settings)) as client:
+        network = client.get("/api/v1/traffic/bengaluru/sumo/network")
+        assert network.status_code == 422
+        assert "setup_bengaluru_sumo.py" in network.json()["error"]["hint"]
+        run = client.post(
+            "/api/v1/traffic/bengaluru/sumo/run",
+            json={"scenario": {"pattern": "balanced", "demand_scale": 1.0, "seed": 2}},
+        )
+        assert run.status_code == 422
+        assert "setup_bengaluru_sumo.py" in run.json()["error"]["hint"]
+
+
+def test_live_route_endpoint_accepts_completed_bengaluru_gnn_run_for_ranking(tmp_path, monkeypatch):
+    settings = get_settings().model_copy(
+        update={
+            "data_dir": tmp_path,
+            "database_url": f"sqlite:///{(tmp_path / 'api.db').as_posix()}",
+            "tomtom_api_key": None,
+        }
+    )
+    edge = EdgeInfo(
+        "osm-road",
+        "from",
+        "to",
+        100,
+        13.89,
+        1,
+        ((0, 0), (1, 0)),
+        ((12.9757, 77.6055), (12.9757, 77.6065)),
+    )
+    network = NetworkModel(Path("bengaluru.net.xml"), [edge], [], {}, {}, [], "net-hash", "tls")
+    route_response = {
+        "routes": [{
+            "rank": 1,
+            "travel_time_s": 600,
+            "geometry": [[12.9757, 77.6055], [12.9757, 77.6065]],
+        }],
+    }
+    completed_run = {
+        "kind": "bengaluru_sumo",
+        "status": "succeeded",
+        "result": {
+            "network_id": "net-hash",
+            "horizon_s": 270,
+            "edges": [{"id": "osm-road", "ci": 0.1, "pred_ci": 0.8}],
+        },
+    }
+    with TestClient(create_app(settings)) as client:
+        state = client.app.state.nexflow
+        state.bengaluru_net = network
+        monkeypatch.setattr(state.traffic, "route_options", lambda *_args: route_response)
+        monkeypatch.setattr(state.jobs, "get", lambda run_id: completed_run if run_id == "run-12345678" else None)
+
+        response = client.get(
+            "/api/v1/traffic/bengaluru/routes",
+            params={"origin_id": "mg-road", "destination_id": "silk-board", "simulation_run_id": "run-12345678"},
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["forecast_source"] == "bengaluru_sumo_gnn"
+        assert result["routes"][0]["simulation_forecast_edge_ids"] == ["osm-road"]
+        assert result["routes"][0]["predicted_travel_time_s"] > result["routes"][0]["travel_time_s"]

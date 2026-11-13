@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from "react-leaflet";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, ApiError, Level, LiveRouteOption, LiveTrafficReading, LiveTrafficRoutes, toApiError } from "../api/client";
-import { useAsync } from "../hooks/useAsync";
+import { api, ApiError, BengaluruSumoResult, Level, LiveRouteOption, LiveTrafficReading, LiveTrafficRoutes, ScenarioIn, toApiError } from "../api/client";
+import { useAsync, useRunner } from "../hooks/useAsync";
 import TrafficMap from "../components/TrafficMap";
 import { Badge, Button, Card, Empty, ErrorBox, LEVEL_LABEL, Loading, LevelLegend, SourceBadge, num } from "../components/ui";
 
@@ -17,12 +17,17 @@ function speedColor(speed: number | null, freeFlow: number) {
   return speedRatio >= 0.8 ? "#16a34a" : speedRatio >= 0.5 ? "#eab308" : "#dc2626";
 }
 
+function congestionColor(ci: number) {
+  return ci < 0.3 ? "#16a34a" : ci < 0.6 ? "#eab308" : "#dc2626";
+}
+
 export default function MapPage() {
   const net = useAsync(() => api.network());
   const pred = useAsync(() => api.trafficPredictions());
   const cur = useAsync(() => api.trafficCurrent());
   const live = useAsync(() => api.bengaluruTraffic());
   const liveForecast = useAsync(() => api.bengaluruPredictions());
+  const bengaluruRun = useRunner<BengaluruSumoResult>();
   const [searchParams, setSearchParams] = useSearchParams();
   const source = searchParams.get("source") === "simulation" ? "simulation" : "bengaluru";
   const setSource = (next: "bengaluru" | "simulation") => {
@@ -32,6 +37,7 @@ export default function MapPage() {
   };
   const [view, setView] = useState<"current" | "predicted">("current");
   const [liveView, setLiveView] = useState<"current" | "predicted">("predicted");
+  const [sumoView, setSumoView] = useState<"current" | "predicted">("predicted");
   const [base, setBase] = useState(true);
   const [edge, setEdge] = useState<string | null>(null);
   const [junction, setJunction] = useState<string | null>(null);
@@ -87,7 +93,8 @@ export default function MapPage() {
     setLiveRouteErr(null);
     setLiveRouteOptions(null);
     try {
-      const options = await api.bengaluruRoutes(liveOrigin, liveDestination);
+      const simulationRunId = bengaluruRun.run?.status === "succeeded" ? bengaluruRun.run.id : undefined;
+      const options = await api.bengaluruRoutes(liveOrigin, liveDestination, simulationRunId);
       setLiveRouteOptions(options);
       setSelectedLiveRoute(options.routes.find((option) => option.recommended)?.rank ?? options.routes[0]?.rank ?? 1);
     } catch (error) {
@@ -95,6 +102,10 @@ export default function MapPage() {
     } finally {
       setLiveRouteBusy(false);
     }
+  };
+  const runBengaluruSumo = () => {
+    const scenario: ScenarioIn = { pattern: "balanced", demand_scale: 1.0, seed: Math.floor(Date.now() / 1000) % 1_000_000 };
+    void bengaluruRun.start(() => api.runBengaluruSumo(scenario));
   };
   const routes = route ? [
     { id: "default", shape: route.default_shape, color: "#1e293b", dash: "2 8" },
@@ -129,7 +140,15 @@ export default function MapPage() {
             {(["current", "predicted"] as const).map((v) => (
               <button key={v} onClick={() => setLiveView(v)} aria-pressed={liveView === v}
                 className={`px-3 py-1.5 text-sm ${liveView === v ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}>
-                {v === "current" ? "Current TomTom" : "NexFlow forecast"}
+                {v === "current" ? "Current TomTom" : "TomTom trend"}
+              </button>
+            ))}
+          </div>}
+          {source === "bengaluru" && bengaluruRun.run?.status === "succeeded" && <div role="group" aria-label="Bengaluru SUMO result layer" className="inline-flex overflow-hidden rounded-lg border border-slate-300">
+            {(["current", "predicted"] as const).map((v) => (
+              <button key={v} onClick={() => setSumoView(v)} aria-pressed={sumoView === v}
+                className={`px-3 py-1.5 text-sm ${sumoView === v ? "bg-slate-700 text-white" : "bg-white text-slate-700"}`}>
+                {v === "current" ? "SUMO current" : "GNN forecast"}
               </button>
             ))}
           </div>}
@@ -139,7 +158,7 @@ export default function MapPage() {
       {source === "bengaluru" ? (
         <>
           <div role="note" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
-            The NexFlow forecast uses recent TomTom readings to estimate speed on the five monitored road segments 15 minutes ahead. It is a bounded trend estimate, not the synthetic GNN/SUMO model; route recommendations adjust TomTom route ETAs only where a monitored segment matches the route.
+            The TomTom trend uses recent readings to estimate speeds on monitored roads. After running Bengaluru SUMO/GNN, click “Rank routes with GNN forecast” to rank TomTom route options by predicted congestion on matching OSM roads; uncovered route portions keep TomTom's ETA.
           </div>
           <ErrorBox error={live.error} />
           <ErrorBox error={liveForecast.error} />
@@ -159,6 +178,16 @@ export default function MapPage() {
               {live.loading && !live.data ? <Loading label="Loading Bengaluru traffic…" /> : (
                 <MapContainer center={[12.95, 77.65]} zoom={11.5} scrollWheelZoom style={{ height: 560, width: "100%" }} className="overflow-hidden rounded-xl border border-slate-200">
                   {base && <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />}
+                  {bengaluruRun.run?.status === "succeeded" && bengaluruRun.run.result?.edges.map((predictedEdge) => {
+                    const ci = sumoView === "predicted" ? predictedEdge.pred_ci : predictedEdge.ci;
+                    return (
+                      <Polyline key={`bengaluru-sumo-${predictedEdge.id}`} positions={predictedEdge.shape}
+                        pathOptions={{ color: congestionColor(ci), weight: 3, opacity: 0.75 }}>
+                        <Tooltip sticky>{predictedEdge.id} · {sumoView === "predicted" ? "SUMO/GNN forecast" : "SUMO current"}
+                          · congestion {ci.toFixed(2)}</Tooltip>
+                      </Polyline>
+                    );
+                  })}
                   {liveSensors.map((sensor) => {
                     const reading = sensor.latest;
                     const forecast = forecastBySensor.get(sensor.id);
@@ -206,7 +235,8 @@ export default function MapPage() {
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-500" />50–80%</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-red-600" />&lt;50%</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />No reading</span>
-                {liveView === "predicted" && <span><span className="mr-1 inline-block h-1 w-5 border-t-2 border-dashed border-slate-700 align-middle" />NexFlow 15-minute speed forecast</span>}
+                {liveView === "predicted" && <span><span className="mr-1 inline-block h-1 w-5 border-t-2 border-dashed border-slate-700 align-middle" />TomTom-history trend forecast</span>}
+                {bengaluruRun.run?.status === "succeeded" && <span><span className="mr-1 inline-block h-1 w-5 border-t-2 border-slate-700 align-middle" />OSM road state: {sumoView === "predicted" ? "GNN forecast" : "SUMO simulated current"}</span>}
                 {liveRouteOptions && <span><span className="mr-1 inline-block h-1 w-5 bg-violet-700 align-middle" />Selected live route · dashed blue alternatives</span>}
               </div>
             </div>
@@ -242,9 +272,33 @@ export default function MapPage() {
                 <Link className="mt-2 inline-block text-sm font-medium text-teal-800 underline" to="/bengaluru">Open Bengaluru traffic history</Link>
                 <p className="mt-2 text-xs text-slate-500">Last collection: {live.data?.last_poll_at ? new Date(live.data.last_poll_at).toLocaleString() : "none yet"} · {live.data?.observation_count ?? 0} stored readings</p>
               </Card>
+              <Card title="Simulate with TomTom data (SUMO + GNN)">
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-600">
+                    Runs SUMO on OpenStreetMap roads around the five monitored areas. Current TomTom speeds cap the matched SUMO road edges; the Bengaluru-specific GNN forecasts the resulting simulated traffic. Road data © OpenStreetMap contributors (ODbL).
+                  </p>
+                  <Button onClick={runBengaluruSumo} disabled={bengaluruRun.busy || !live.data?.configured}>
+                    {bengaluruRun.busy ? "Running SUMO…" : "Run TomTom-calibrated simulation"}
+                  </Button>
+                  <ErrorBox error={bengaluruRun.error} />
+                  {bengaluruRun.run?.status === "succeeded" && bengaluruRun.run.result && (
+                    <div className="space-y-2 text-xs text-slate-700">
+                      <p>GNN forecast: {bengaluruRun.run.result.horizon_s / 60} min ahead · model {bengaluruRun.run.result.model_version}</p>
+                      <p>TomTom speeds applied to {bengaluruRun.run.result.tomtom_speed_constraints_applied.length} matched OSM road(s).</p>
+                      <p>{bengaluruRun.run.result.notice}</p>
+                    </div>
+                  )}
+                  {!live.data?.configured && <p className="text-xs text-amber-700">Configure TomTom to provide live speed inputs.</p>}
+                </div>
+              </Card>
               <Card title="Find a live traffic-aware route">
                 <div className="space-y-3">
-                  <p className="text-xs text-slate-600">TomTom supplies route options and current ETAs. NexFlow adjusts those ETAs using 15-minute forecasts where monitored roads match each route. Start with MG Road → Silk Board.</p>
+                  <p className="text-xs text-slate-600">
+                    TomTom supplies route options and current ETAs. {bengaluruRun.run?.status === "succeeded"
+                      ? "NexFlow ranks them using the SUMO/GNN forecast on matching OSM roads."
+                      : "Run the Bengaluru SUMO/GNN simulation first to rank options using its forecast; otherwise the TomTom-history trend is used when available."}
+                    {" "}Start with MG Road → Silk Board.
+                  </p>
                   <label className="block text-xs text-slate-600">Origin
                     <select className="mt-1 w-full rounded border border-slate-300 p-2 text-sm" value={liveOrigin} onChange={(event) => {
                       setLiveOrigin(event.target.value);
@@ -264,7 +318,7 @@ export default function MapPage() {
                     </select>
                   </label>
                   <Button onClick={findLiveRoutes} disabled={liveRouteBusy || !live.data?.configured || liveSensors.length < 2 || liveOrigin === liveDestination}>
-                    {liveRouteBusy ? "Finding routes…" : "Find live routes"}
+                    {liveRouteBusy ? "Finding routes…" : bengaluruRun.run?.status === "succeeded" ? "Rank routes with GNN forecast" : "Find live routes"}
                   </Button>
                   {liveOrigin === liveDestination && <p className="text-xs text-amber-700">Choose different origin and destination roads.</p>}
                   <ErrorBox error={liveRouteErr} />
@@ -283,7 +337,9 @@ export default function MapPage() {
                             {option.traffic_delay_s != null ? ` · ${Math.round(option.traffic_delay_s / 60)} min traffic delay` : ""}
                           </span>
                           {option.predicted_travel_time_s != null && <span className="block text-xs text-slate-500">
-                            TomTom current ETA: {(option.travel_time_s / 60).toFixed(0)} min · {option.forecast_sensor_count} forecast segment(s) matched
+                          TomTom current ETA: {(option.travel_time_s / 60).toFixed(0)} min · {liveRouteOptions.forecast_source === "bengaluru_sumo_gnn"
+                            ? `${option.simulation_forecast_coverage_pct ?? 0}% of route matched to ${option.simulation_forecast_edge_count ?? 0} predicted OSM road(s)`
+                            : `${option.forecast_sensor_count} TomTom trend segment(s) matched`}
                           </span>}
                         </button>
                       ))}

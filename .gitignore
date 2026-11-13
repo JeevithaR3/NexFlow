@@ -7,4 +7,5 @@ frontend/dist/
 data/runs/
 data/*.db*
 data/memory/
+data/bengaluru_sumo/
 _previous_attempt/

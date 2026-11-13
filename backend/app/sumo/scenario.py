@@ -67,6 +67,8 @@ def rate_multiplier(t: float, duration: float) -> float:
 def build_trips(net: NetworkModel, sc: ScenarioConfig) -> list[tuple[float, str, str]]:
     seed_material = hashlib.sha256(f"{sc.pattern}|{sc.seed}".encode()).digest()[:8]
     rng = np.random.default_rng([sc.seed, int.from_bytes(seed_material, "little")])
+    if not any(net.origin_by_side.values()) or not any(net.dest_by_side.values()):
+        return _build_osm_trips(net, sc, rng)
     rates = _RATES[sc.pattern]
     trips: list[tuple[float, str, str]] = []
     for side in SIDES:
@@ -87,6 +89,46 @@ def build_trips(net: NetworkModel, sc: ScenarioConfig) -> list[tuple[float, str,
                     dside = _LATERAL[side][0 if r < THROUGH_SHARE + (1 - THROUGH_SHARE) / 2 else 1]
                 dests = net.dest_by_side[dside]
                 trips.append((round(t, 2), origin, dests[int(rng.integers(len(dests)))]))
+    trips.sort(key=lambda x: (x[0], x[1], x[2]))
+    return trips
+
+
+def _build_osm_trips(net: NetworkModel, sc: ScenarioConfig, rng: np.random.Generator) -> list[tuple[float, str, str]]:
+    """Create modest trips between reachable boundary roads in disconnected OSM extracts."""
+    incoming: dict[str, int] = {junction.id: 0 for junction in net.junctions}
+    outgoing: dict[str, int] = {junction.id: 0 for junction in net.junctions}
+    successors: dict[str, list[str]] = {}
+    for edge in net.edges:
+        outgoing[edge.from_node] += 1
+        incoming[edge.to_node] += 1
+    for first, second in net.edge_links:
+        successors.setdefault(first, []).append(second)
+
+    origins = [edge.id for edge in net.edges if incoming[edge.from_node] == 0]
+    destinations = {edge.id for edge in net.edges if outgoing[edge.to_node] == 0}
+    trips: list[tuple[float, str, str]] = []
+    for origin in origins:
+        reachable, visited, stack = [], set(), [origin]
+        while stack:
+            edge_id = stack.pop()
+            if edge_id in visited:
+                continue
+            visited.add(edge_id)
+            if edge_id in destinations and edge_id != origin:
+                reachable.append(edge_id)
+            stack.extend(successors.get(edge_id, ()))
+        if not reachable:
+            continue
+
+        rate = 30.0 * sc.demand_scale / 3600.0
+        t = 0.0
+        while True:
+            t += float(rng.exponential(1.0 / rate))
+            if t >= sc.duration_s:
+                break
+            keep = rate_multiplier(t, sc.duration_s) / 1.2
+            if rng.random() <= keep:
+                trips.append((round(t, 2), origin, reachable[int(rng.integers(len(reachable)))]))
     trips.sort(key=lambda x: (x[0], x[1], x[2]))
     return trips
 

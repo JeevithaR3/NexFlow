@@ -65,6 +65,30 @@ class Settings(BaseSettings):
         return self.simulation_dir / "network" / "network.net.xml"
 
     @property
+    def bengaluru_sumo_dir(self) -> Path:
+        return self.data_dir / "bengaluru_sumo"
+
+    @property
+    def bengaluru_network_file(self) -> Path:
+        return self.bengaluru_sumo_dir / "bengaluru-five-local.net.xml"
+
+    @property
+    def bengaluru_sumocfg_file(self) -> Path:
+        return self.bengaluru_sumo_dir / "bengaluru.sumocfg"
+
+    @property
+    def bengaluru_dataset_dir(self) -> Path:
+        return self.bengaluru_sumo_dir / "dataset"
+
+    @property
+    def bengaluru_checkpoint_file(self) -> Path:
+        return self.bengaluru_sumo_dir / "gnn_forecaster.pt"
+
+    @property
+    def bengaluru_metrics_file(self) -> Path:
+        return self.bengaluru_sumo_dir / "gnn_metrics.json"
+
+    @property
     def sumocfg_file(self) -> Path:
         return self.simulation_dir / "configs" / "simulation.sumocfg"
 
@@ -103,7 +127,8 @@ class Settings(BaseSettings):
         return self.horizon * self.interval_s
 
     def ensure_dirs(self) -> None:
-        for p in (self.data_dir, self.models_dir, self.runs_dir, self.dataset_dir, self.memory_dir):
+        for p in (self.data_dir, self.models_dir, self.runs_dir, self.dataset_dir, self.memory_dir,
+                  self.bengaluru_sumo_dir, self.bengaluru_dataset_dir):
             p.mkdir(parents=True, exist_ok=True)
 
 

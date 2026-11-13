@@ -41,6 +41,10 @@ class SimulationRunIn(BaseModel):
     intervention: InterventionIn | None = None
 
 
+class BengaluruSumoRunIn(BaseModel):
+    scenario: ScenarioIn = ScenarioIn()
+
+
 class EvaluateIn(BaseModel):
     scenario: ScenarioIn = ScenarioIn()
     junction_id: str | None = Field(None, max_length=32)
